@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example
+
+# Runtime / generated
+public/bills/*.pdf
+public/bills/_*.json
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE / local
+.vscode/
+.idea/
+*.swp
+.cursor/

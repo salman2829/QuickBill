@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QuickBill POS — Smart Retail Terminal</title>
+  <meta name="description" content="Production-ready Point of Sale with barcode scanning, billing, inventory, and Gemini AI insights.">
+  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/css/styles.css?v=21">
+  <script>
+    if (!localStorage.getItem('qb_theme_v19')) {
+      localStorage.setItem('qb_theme_v19', 'true');
+      if ('caches' in window) {
+        caches.keys().then(keys => keys.forEach(key => caches.delete(key)));
+      }
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
+      }
+      window.location.reload();
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+</head>
+<body>
+
+  <!-- AUTH -->
+  <div id="auth-view" class="auth-page-container">
+    <div class="auth-shell">
+      <aside class="auth-hero">
+        <img src="/assets/logo.png" alt="QuickBill" class="auth-hero-logo">
+        <h1>QuickBill</h1>
+        <p>Enterprise retail POS with barcode billing, live inventory, and AI-assisted insights.</p>
+        <div class="auth-hero-features">
+          <div class="auth-feature"><span class="auth-feature-dot"></span> Fast barcode &amp; cart checkout</div>
+          <div class="auth-feature"><span class="auth-feature-dot"></span> Inventory CRUD &amp; stock alerts</div>
+          <div class="auth-feature"><span class="auth-feature-dot"></span> Sales analytics + Gemini AI</div>
+        </div>
+      </aside>
+
+      <div class="auth-card">
+        <div class="auth-brand auth-brand-mobile">
+          <img src="/assets/logo.png" alt="QuickBill POS">
+          <h1>QuickBill</h1>
+          <p class="auth-subtitle">Enterprise Retail POS &amp; Smart Inventory</p>
+        </div>
+        <p id="auth-panel-subtitle" class="auth-subtitle" style="text-align:center; margin-bottom:1rem;">Create your cashier account to get started</p>
+
+        <div class="auth-tab-bar">
+          <button id="tab-btn-login" type="button" class="auth-tab-btn" data-i18n="sign_in" onclick="window.POS_APP.switchAuthTab('login')">Sign In</button>
+          <button id="tab-btn-register" type="button" class="auth-tab-btn active" data-i18n="register_cashier" onclick="window.POS_APP.switchAuthTab('register')">Register</button>
+        </div>
+        <p id="auth-hint" class="auth-hint">New here? Register an account. Already registered? Use Sign In.</p>
+        <div id="auth-error" class="auth-error" style="display:none;" role="alert"></div>
+
+        <form id="auth-login-form" class="auth-form" style="display:none;" onsubmit="window.POS_APP.handleAuthSubmit(event, 'login')">
+          <div class="form-group">
+            <label data-i18n="email_label">Email Address</label>
+            <input type="email" id="login-email" required placeholder="Enter your registered email" autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label data-i18n="password_label">Password</label>
+            <input type="password" id="login-password" required placeholder="Enter password" autocomplete="current-password">
+          </div>
+
+          <button type="submit" class="auth-submit-btn" data-i18n="secure_login">Secure Login</button>
+          <button type="button" class="demo-login-btn" data-i18n="demo_login" onclick="window.POS_APP.loginAsDemoCashier()">Quick Demo Cashier Login</button>
+        </form>
+
+        <form id="auth-register-form" class="auth-form" onsubmit="window.POS_APP.handleAuthSubmit(event, 'register')">
+          <div class="form-group">
+            <label data-i18n="full_name">Full Name</label>
+            <input type="text" id="reg-name" required placeholder="John Doe" autocomplete="name">
+          </div>
+          <div class="form-group">
+            <label data-i18n="email_label">Email Address</label>
+            <input type="email" id="reg-email" required placeholder="you@store.com" autocomplete="email" onblur="window.POS_APP.onRegisterEmailBlur()">
+          </div>
+          <div class="form-group">
+            <label data-i18n="password_label">Password</label>
+            <input type="password" id="reg-password" required minlength="6" placeholder="Min 6 characters" autocomplete="new-password">
+          </div>
+          <div class="form-group">
+            <label data-i18n="role_label">Role</label>
+            <select id="reg-role">
+              <option value="cashier">Cashier</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <button type="submit" class="auth-submit-btn" data-i18n="register_user_btn">Create Account</button>
+          <p class="auth-switch-note">Already have an account? <button type="button" class="auth-link-btn" onclick="window.POS_APP.switchAuthTab('login')">Sign In</button></p>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="app-view" style="display:none;">
+
+    <header class="navbar">
+      <div class="brand">
+        <img src="/assets/logo.png" alt="QuickBill POS">
+        <div class="brand-text">
+          QuickBill
+          <small>Enterprise POS</small>
+        </div>
+      </div>
+
+      <nav class="nav-links">
+        <button class="nav-btn active" data-tab="pos" data-i18n="tab_pos">POS Terminal</button>
+        <button class="nav-btn" data-tab="inventory" data-i18n="tab_inventory">Inventory <span id="low-stock-badge" class="nav-badge" style="display:none;">0</span></button>
+        <button class="nav-btn" data-tab="sales" data-i18n="tab_sales">Sales History</button>
+        <button class="nav-btn" data-tab="analytics" data-i18n="tab_analytics">Analytics &amp; AI</button>
+      </nav>
+
+      <div class="user-profile">
+        <button id="btn-nav-back" type="button" class="nav-back-btn" onclick="window.POS_APP.goBack()" title="Go back" style="display:none;">
+          ← Back
+        </button>
+        <button id="btn-voice-ai" type="button" class="voice-ai-trigger" onclick="VoiceAssistantInstance.toggleListening()" title="Enable or mute Hey Access">
+          <span aria-hidden="true">✦</span> <span>"Hey Access" Voice AI</span>
+        </button>
+
+        <select id="lang-selector" class="lang-select" onchange="window.POS_APP.changeLanguage(this.value)">
+          <option value="en">English</option>
+          <option value="te">తెలుగు</option>
+          <option value="ta">தமிழ்</option>
+          <option value="hi">हिंदी</option>
+          <option value="es">Español</option>
+        </select>
+
+        <div class="cashier-chip">
+          <span class="badge-pulse"></span>
+          <span id="cashier-name-label" class="cashier-name">Senior Cashier</span>
+          <button type="button" class="logout-btn" onclick="window.POS_APP.logout()" data-i18n="logout">Logout</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="ai-toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="voice-live-status" class="voice-live-status" aria-live="polite"></div>
+
+    <main class="container">
+
+      <!-- POS -->
+      <section id="tab-pos" class="tab-pane active">
+        <div class="pos-grid">
+          <div class="catalog-section">
+            <div class="catalog-toolbar">
+              <div class="search-box">
+                <span class="search-icon" aria-hidden="true">⌕</span>
+                <input type="text" id="pos-search-input" data-i18n-placeholder="search_placeholder" placeholder="Search by product name, SKU or scan barcode..." onkeyup="window.POS_APP.handleSearch(this.value)">
+              </div>
+              <button type="button" class="scanner-btn" onclick="window.POS_APP.openScannerModal()">
+                <span data-i18n="scan_barcode">Scan Barcode</span>
+              </button>
+            </div>
+
+            <div class="category-pills" id="category-pills">
+              <button type="button" class="cat-pill active" data-i18n="all_products" onclick="window.POS_APP.filterCategory('All')">All Products</button>
+              <button type="button" class="cat-pill" onclick="window.POS_APP.filterCategory('Dairy')">Dairy</button>
+              <button type="button" class="cat-pill" onclick="window.POS_APP.filterCategory('Bakery')">Bakery</button>
+              <button type="button" class="cat-pill" onclick="window.POS_APP.filterCategory('Grains')">Grains</button>
+              <button type="button" class="cat-pill" onclick="window.POS_APP.filterCategory('Beverages')">Beverages</button>
+              <button type="button" class="cat-pill" onclick="window.POS_APP.filterCategory('Oils')">Oils</button>
+              <button type="button" class="cat-pill" onclick="window.POS_APP.filterCategory('Snacks')">Snacks</button>
+              <button type="button" class="cat-pill" onclick="window.POS_APP.filterCategory('Personal Care')">Personal Care</button>
+            </div>
+
+            <div class="products-grid" id="products-grid"></div>
+          </div>
+
+          <aside class="cart-section" id="cart-section">
+            <div class="cart-header">
+              <div class="cart-title" data-i18n="current_order">Current Order</div>
+              <button type="button" class="cart-clear" data-i18n="clear_cart" onclick="window.POS_APP.clearCart()">Clear Cart</button>
+            </div>
+
+            <div class="customer-phone-bar">
+              <label for="cart-customer-phone">Customer Mobile</label>
+              <div class="customer-phone-row">
+                <span class="phone-prefix">+91</span>
+                <input type="tel" id="cart-customer-phone" class="input" maxlength="10" inputmode="numeric" placeholder="10-digit mobile" onchange="window.POS_APP.onCartPhoneChange(this.value)" oninput="window.POS_APP.onCartPhoneChange(this.value)">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="window.POS_APP.ensureCustomerPhone()">Edit</button>
+              </div>
+              <p id="customer-phone-display" class="customer-phone-hint">Customer mobile not set</p>
+            </div>
+
+            <div class="cart-items" id="cart-items-container">
+              <div class="empty-state" data-i18n="cart_empty_text">
+                Cart is empty. Click products or scan barcode to add items.
+              </div>
+            </div>
+
+            <div class="cart-summary">
+              <div class="summary-row">
+                <span data-i18n="subtotal">Subtotal:</span>
+                <span id="summary-subtotal">₹0.00</span>
+              </div>
+              <div class="summary-row">
+                <span data-i18n="discount">Discount (₹):</span>
+                <input type="number" id="summary-discount-input" class="discount-input" value="0" min="0" onchange="window.POS_APP.calculateTotals()">
+              </div>
+              <div class="summary-row grand-total">
+                <span data-i18n="grand_total">Grand Total:</span>
+                <span id="summary-grand-total">₹0.00</span>
+              </div>
+
+              <div class="payment-row">
+                <select id="payment-method-select" class="payment-select">
+                  <option value="cash">Cash Payment</option>
+                  <option value="card">Credit/Debit Card</option>
+                  <option value="upi">UPI / QR Code</option>
+                  <option value="whatsapp_pay">WhatsApp Pay</option>
+                </select>
+              </div>
+
+              <button type="button" class="checkout-btn" data-i18n="pay_print" onclick="window.POS_APP.processCheckout()">
+                Pay &amp; Print Receipt
+              </button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- INVENTORY -->
+      <section id="tab-inventory" class="tab-pane">
+        <div class="catalog-section">
+          <div class="section-header">
+            <h2 data-i18n="inventory_title">Product Inventory Manager</h2>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="window.POS_APP.checkLowStockAlerts(true)">Low Stock Alerts</button>
+              <button type="button" class="btn btn-primary btn-sm" onclick="window.POS_APP.compareWholesaleAllLowStock()">Wholesale Compare</button>
+              <button type="button" class="scanner-btn" onclick="window.POS_APP.openProductModal()">
+                <span data-i18n="add_product">Add New Product</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th data-i18n="th_image">Image</th>
+                  <th data-i18n="th_sku">SKU / Barcode</th>
+                  <th data-i18n="th_name">Product Name</th>
+                  <th data-i18n="th_category">Category</th>
+                  <th data-i18n="th_price">Price</th>
+                  <th data-i18n="th_cost">Cost Price</th>
+                  <th data-i18n="th_stock">Stock</th>
+                  <th data-i18n="th_actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="inventory-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- SALES -->
+      <section id="tab-sales" class="tab-pane">
+        <div class="sales-layout">
+          <div class="catalog-section">
+            <div class="sales-header-row">
+              <h2 data-i18n="sales_title">Sales Transactions &amp; Invoices</h2>
+              <div class="sales-view-tabs">
+                <button type="button" class="sales-view-btn active" id="sales-view-bills" onclick="window.POS_APP.setSalesView('bills')">All Bills</button>
+                <button type="button" class="sales-view-btn" id="sales-view-customers" onclick="window.POS_APP.setSalesView('customers')">Customer History</button>
+              </div>
+            </div>
+
+            <div id="sales-bills-panel">
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Invoice</th>
+                      <th>Date</th>
+                      <th>Bill Amount</th>
+                      <th>Payment</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sales-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div id="sales-customers-panel" style="display:none;">
+              <div id="customer-history-list" class="customer-history-list"></div>
+            </div>
+          </div>
+
+          <aside id="sale-detail-panel" class="sale-detail-panel" style="display:none;">
+            <div class="sale-detail-header">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="window.POS_APP.closeSaleDetail()">← Back</button>
+              <h3>Bill Details</h3>
+            </div>
+            <div id="sale-detail-body" class="sale-detail-body"></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ANALYTICS -->
+      <section id="tab-analytics" class="tab-pane">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon revenue">₹</div>
+            <div>
+              <div class="stat-val" id="stat-total-revenue">₹0.00</div>
+              <div class="stat-lbl" data-i18n="stat_revenue">Total Sales Revenue</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon invoices">☰</div>
+            <div>
+              <div class="stat-val" id="stat-total-sales">0</div>
+              <div class="stat-lbl" data-i18n="stat_sales">Invoices Generated</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon alerts">!</div>
+            <div>
+              <div class="stat-val" id="stat-low-stock">0</div>
+              <div class="stat-lbl" data-i18n="stat_lowstock">Low Stock Alerts</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon products">▦</div>
+            <div>
+              <div class="stat-val" id="stat-total-products">0</div>
+              <div class="stat-lbl" data-i18n="stat_products">Active Products</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="charts-row">
+          <div class="chart-card">
+            <h3 data-i18n="revenue_chart_title">Revenue Trends (Weekly)</h3>
+            <canvas id="revenueChart" height="220"></canvas>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <h3 data-i18n="gemini_ai_title">Google Gemini AI Insights</h3>
+              <button type="button" class="btn btn-primary btn-sm" onclick="window.POS_APP.fetchAiInsights()" data-i18n="refresh_ai">Refresh AI</button>
+            </div>
+            <div id="ai-insights-box" class="ai-insights-box">
+              Loading Gemini AI analysis...
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Scanner modal -->
+    <div id="scanner-modal" class="modal-overlay">
+      <div class="modal-card" style="max-width:500px;">
+        <button type="button" class="modal-close" onclick="window.POS_APP.closeScannerModal()" aria-label="Close">✕</button>
+        <h3 class="modal-title" data-i18n="scan_modal_title">Barcode Scanner Terminal</h3>
+
+        <div id="barcode-reader" class="scanner-viewport"></div>
+        <p class="scanner-hint" data-i18n="scan_modal_desc">Point camera scanner or use USB barcode gun</p>
+
+        <div class="scanner-manual">
+          <label class="field"><span>Scan Code or Type Barcode Number</span></label>
+          <div class="scanner-manual-row">
+            <input type="text" id="manual-scan-input" class="scan-input" placeholder="e.g. 8901030384102..." onkeypress="if(event.key==='Enter'){event.preventDefault(); window.POS_APP.submitManualScan();}">
+            <button type="button" class="btn btn-success" onclick="window.POS_APP.submitManualScan()">Scan &amp; Add</button>
+          </div>
+        </div>
+
+        <div class="preset-chips">
+          <span class="preset-label">Quick Test Barcode Presets:</span>
+          <div class="chip-row">
+            <button type="button" class="preset-chip" onclick="window.POS_APP.handleBarcodeScanResult('8901030384102'); window.POS_APP.closeScannerModal();">Milk (8901030384102)</button>
+            <button type="button" class="preset-chip" onclick="window.POS_APP.handleBarcodeScanResult('8901030384119'); window.POS_APP.closeScannerModal();">Bread (8901030384119)</button>
+            <button type="button" class="preset-chip" onclick="window.POS_APP.handleBarcodeScanResult('8901030384126'); window.POS_APP.closeScannerModal();">Rice (8901030384126)</button>
+            <button type="button" class="preset-chip" onclick="window.POS_APP.handleBarcodeScanResult('8901030384133'); window.POS_APP.closeScannerModal();">Coffee (8901030384133)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product modal -->
+    <div id="product-modal" class="modal-overlay">
+      <div class="modal-card">
+        <button type="button" class="modal-close" onclick="window.POS_APP.closeProductModal()" aria-label="Close">✕</button>
+        <h3 id="product-modal-title" class="modal-title" data-i18n="add_product">Add Product</h3>
+        <form id="product-form" onsubmit="window.POS_APP.saveProduct(event)">
+          <input type="hidden" id="prod-id">
+          <div class="form-grid-2">
+            <div class="field">
+              <label data-i18n="th_name">Product Name</label>
+              <input type="text" id="prod-name" class="input" required>
+            </div>
+            <div class="field">
+              <label>Barcode</label>
+              <input type="text" id="prod-barcode" class="input" required>
+            </div>
+            <div class="field">
+              <label data-i18n="th_category">Category</label>
+              <input type="text" id="prod-category" class="input" required>
+            </div>
+            <div class="field">
+              <label data-i18n="th_price">Price (₹)</label>
+              <input type="number" step="0.01" id="prod-price" class="input" required>
+            </div>
+            <div class="field">
+              <label data-i18n="th_cost">Cost Price (₹)</label>
+              <input type="number" step="0.01" id="prod-cost" class="input">
+            </div>
+            <div class="field">
+              <label data-i18n="th_stock">Stock Quantity</label>
+              <input type="number" id="prod-stock" class="input" required>
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:0.75rem;">
+            <label>Product Image (URL or Upload)</label>
+            <div class="image-upload-row">
+              <input type="url" id="prod-image" class="input" placeholder="https://images.unsplash.com/..." onchange="window.POS_APP.previewImage(this.value)">
+              <label class="upload-label">
+                Upload
+                <input type="file" id="prod-file" accept="image/*" style="display:none;" onchange="window.POS_APP.handleFileUpload(event)">
+              </label>
+            </div>
+            <div class="img-preview-wrap">
+              <img id="prod-img-preview" class="img-preview" src="https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?w=400&q=80" alt="Preview">
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" style="width:100%; margin-top:1rem;" data-i18n="save_product_db">Save Product to Database</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Receipt modal -->
+    <div id="receipt-modal" class="modal-overlay">
+      <div class="modal-card receipt-card">
+        <div class="receipt-modal-toolbar">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="window.POS_APP.closeReceiptModal()">← Back</button>
+          <button type="button" class="modal-close" onclick="window.POS_APP.closeReceiptModal()" aria-label="Close">✕</button>
+        </div>
+
+        <div id="printable-receipt" class="pro-receipt">
+          <img src="/assets/logo.png" alt="QuickBill POS Logo" class="receipt-brand">
+          <h2 class="receipt-store">QUICKBILL POS</h2>
+          <p class="receipt-sub">Supermarket &amp; Retail Store</p>
+          <p class="receipt-sub">GSTIN: 29AAAAA0000A1Z5 · Ph: +91 98765 00000</p>
+          <div class="receipt-divider"></div>
+
+          <div class="receipt-meta-grid">
+            <div><span class="meta-label">Invoice</span><strong id="receipt-inv-no">INV-2026-XXXX</strong></div>
+            <div><span class="meta-label">Date</span><span id="receipt-date"></span></div>
+            <div><span class="meta-label">Customer</span><span id="receipt-customer">—</span></div>
+            <div><span class="meta-label">Payment</span><span id="receipt-payment">CASH</span></div>
+            <div><span class="meta-label">Cashier</span><span id="receipt-cashier">Cashier</span></div>
+          </div>
+
+          <div class="receipt-divider"></div>
+          <div class="receipt-items-head">
+            <span>Item</span>
+            <span>Amount</span>
+          </div>
+          <div id="receipt-items-list" class="receipt-items"></div>
+          <div class="receipt-divider"></div>
+
+          <div class="receipt-totals">
+            <div class="receipt-line"><span>Subtotal</span><span id="receipt-subtotal">₹0.00</span></div>
+            <div class="receipt-line"><span>Discount</span><span id="receipt-discount">₹0.00</span></div>
+            <div class="receipt-total-row" id="receipt-total-row">
+              <span>TOTAL PAID</span>
+              <span id="receipt-total-val">₹0.00</span>
+            </div>
+          </div>
+
+          <p class="receipt-thanks">Thank you for shopping with us!<br>Have a wonderful day.</p>
+          <p id="receipt-whatsapp-status" class="receipt-wa-status"></p>
+        </div>
+
+        <div class="modal-actions" style="margin-top:1.25rem;">
+          <button type="button" class="btn btn-primary" onclick="window.print()" data-i18n="print_receipt">Print Receipt</button>
+          <button type="button" id="btn-send-whatsapp-bill" class="btn-whatsapp" onclick="window.POS_APP.shareWhatsAppBill()" data-i18n="whatsapp_bill">Send Bill on WhatsApp</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Customer phone modal -->
+    <div id="customer-phone-modal" class="modal-overlay">
+      <div class="modal-card" style="max-width:420px;">
+        <button type="button" class="modal-close" onclick="window.POS_APP.closeCustomerPhoneModal(false)" aria-label="Close">✕</button>
+        <h3 class="modal-title">Customer Mobile Number</h3>
+        <p class="auth-subtitle" style="margin-bottom:1rem; line-height:1.5;">
+          Enter the customer’s mobile number to attach it to this order. After payment, the bill will be sent on WhatsApp with a thank-you message.
+        </p>
+        <form id="customer-phone-form" onsubmit="window.POS_APP.saveCustomerPhone(event)">
+          <div class="field" style="margin-bottom:0.75rem;">
+            <label for="customer-name-input">Customer Name (optional)</label>
+            <input type="text" id="customer-name-input" class="input" placeholder="Walk-in Customer" autocomplete="name">
+          </div>
+          <div class="field">
+            <label for="customer-phone-input">Mobile Number *</label>
+            <div class="customer-phone-row">
+              <span class="phone-prefix">+91</span>
+              <input type="tel" id="customer-phone-input" class="input" required maxlength="10" inputmode="numeric" pattern="[6-9][0-9]{9}" placeholder="9876543210" autocomplete="tel">
+            </div>
+          </div>
+          <div class="modal-actions" style="margin-top:1.25rem;">
+            <button type="button" class="btn btn-ghost" onclick="window.POS_APP.closeCustomerPhoneModal(false)">Skip for now</button>
+            <button type="submit" class="btn btn-primary">Save &amp; Continue</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Low stock alert modal -->
+    <div id="low-stock-modal" class="modal-overlay">
+      <div class="modal-card" style="max-width:560px;">
+        <button type="button" class="modal-close" onclick="window.POS_APP.closeLowStockModal()" aria-label="Close">✕</button>
+        <h3 id="low-stock-title" class="modal-title">Low Stock Alert</h3>
+        <p class="auth-subtitle" style="margin-bottom:1rem; line-height:1.5;">
+          These products are below 10 units. Compare wholesale prices from Flipkart Wholesale, Udaan, Metro Wholesale and JioMart Partner, then place an order.
+        </p>
+        <div id="low-stock-list" class="low-stock-list"></div>
+        <div class="modal-actions" style="margin-top:1.25rem;">
+          <button type="button" class="btn btn-ghost" onclick="window.POS_APP.closeLowStockModal()">Later</button>
+          <button type="button" class="btn btn-primary" onclick="window.POS_APP.compareWholesaleAllLowStock()">Compare All &amp; Order</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wholesale compare modal -->
+    <div id="wholesale-modal" class="modal-overlay">
+      <div class="modal-card wholesale-modal-card">
+        <button type="button" class="modal-close" onclick="window.POS_APP.closeWholesaleModal()" aria-label="Close">✕</button>
+        <h3 class="modal-title">Wholesale Price Comparison</h3>
+        <p id="wholesale-summary" class="auth-subtitle" style="margin-bottom:1rem; line-height:1.5;"></p>
+        <div id="wholesale-compare-body"></div>
+        <div class="modal-actions" style="margin-top:1rem;">
+          <button type="button" class="btn btn-ghost" onclick="window.POS_APP.closeWholesaleModal()">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete confirm -->
+    <div id="delete-confirm-modal" class="modal-overlay">
+      <div class="modal-card" style="max-width:420px; text-align:center;">
+        <button type="button" class="modal-close" onclick="window.POS_APP.closeDeleteModal()" aria-label="Close">✕</button>
+        <div class="delete-icon" aria-hidden="true">🗑</div>
+        <h3 class="modal-title">Confirm Delete Product</h3>
+        <p id="delete-confirm-msg" class="auth-subtitle" style="margin-bottom:1.5rem; line-height:1.5;">
+          Are you sure you want to permanently delete this product from your inventory? This action cannot be undone.
+        </p>
+        <input type="hidden" id="delete-target-id">
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick="window.POS_APP.closeDeleteModal()">Cancel</button>
+          <button type="button" class="btn btn-danger" onclick="window.POS_APP.confirmDeleteProduct()">Yes, Delete Product</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/js/api.js?v=21"></script>
+  <script src="/js/ai.js?v=21"></script>
+  <script src="/js/app.js?v=21"></script>
+</body>
+</html>

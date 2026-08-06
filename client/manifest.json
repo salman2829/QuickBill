@@ -1,0 +1,21 @@
+{
+  "short_name": "QuickBill POS",
+  "name": "QuickBill POS - Smart MERN & AI Point of Sale",
+  "icons": [
+    {
+      "src": "/assets/logo.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/assets/logo.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#3b82f6",
+  "display": "standalone",
+  "orientation": "any"
+}

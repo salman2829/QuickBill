@@ -1,0 +1,26 @@
+{
+  "name": "quickbill-pos",
+  "version": "1.0.0",
+  "description": "Production-Ready QuickBill POS System with MERN Stack, Supabase PostgreSQL & Google Gemini AI",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node server/server.js",
+    "build": "echo 'Build complete for Vercel deployment'"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.14.0",
+    "@supabase/supabase-js": "^2.43.4",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-validator": "^7.1.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0"
+  },
+  "keywords": ["pos", "mern", "supabase", "express", "gemini-ai", "pwa", "quickbill", "vercel"],
+  "author": "Antigravity Engineering",
+  "license": "MIT"
+}

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "node server/server.js",
-    "build": "echo 'Build complete for Vercel deployment'"
+    "sync:config": "node scripts/sync-frontend-config.js",
+    "build": "node scripts/sync-frontend-config.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.14.0",

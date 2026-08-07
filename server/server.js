@@ -4,9 +4,9 @@ const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
 
-// Load environment variables
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+// Load env: server/.env is canonical (Render rootDir=server). Root .env is optional fallback.
 require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const supabase = require('./config/supabase.js');
 const errorHandler = require('./middleware/errorHandler.js');

@@ -9,6 +9,9 @@ server/node_modules/
 server/.env
 server/.env.*
 !server/.env.example
+client/.env
+client/.env.*
+!client/.env.example
 
 # Runtime / generated
 public/bills/*.pdf

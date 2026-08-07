@@ -1,18 +1,24 @@
 services:
   - type: web
     name: quickbill-pos-backend
-    env: node
+    runtime: node
     rootDir: server
+    plan: free
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
-      - key: PORT
-        value: 5000
       - key: NODE_ENV
         value: production
-      - key: MONGO_URI
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
         sync: false
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
+      - key: JWT_EXPIRE
+        value: 30d
       - key: GEMINI_API_KEY
+        sync: false
+      - key: CLIENT_URL
         sync: false

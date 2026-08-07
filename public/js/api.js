@@ -1,5 +1,6 @@
 // Centralized Fetch API Client for QuickBill POS Backend
-const API_BASE_URL = '/api';
+// Uses Render URL in production (set in config.js); falls back to same-origin /api for local
+const API_BASE_URL = (window.QB_CONFIG && window.QB_CONFIG.API_BASE_URL) || '/api';
 
 const API = {
   getToken: () => localStorage.getItem('qb_jwt_token'),

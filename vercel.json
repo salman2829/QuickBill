@@ -1,9 +1,11 @@
 {
   "version": 2,
+  "buildCommand": null,
+  "outputDirectory": "public",
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/index.js"
+      "source": "/((?!assets|css|js|bills|manifest\\.json|sw\\.js|favicon).*)",
+      "destination": "/index.html"
     }
   ]
 }

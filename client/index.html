@@ -60,12 +60,15 @@
             <label data-i18n="email_label">Email Address</label>
             <input type="email" id="login-email" required placeholder="Enter your registered email" autocomplete="username">
           </div>
-          <div class="form-group">
+          <div class="form-group" id="login-password-group">
             <label data-i18n="password_label">Password</label>
             <input type="password" id="login-password" required placeholder="Enter password" autocomplete="current-password">
           </div>
+          <div style="text-align: right; margin-top: -0.5rem; margin-bottom: 1rem;">
+            <button type="button" id="btn-toggle-otp-login" class="auth-link-btn" onclick="window.POS_APP.toggleOtpLoginMode(true)">Sign In with OTP</button>
+          </div>
 
-          <button type="submit" class="auth-submit-btn" data-i18n="secure_login">Secure Login</button>
+          <button type="submit" id="btn-login-submit" class="auth-submit-btn" data-i18n="secure_login">Secure Login</button>
           <button type="button" class="demo-login-btn" data-i18n="demo_login" onclick="window.POS_APP.loginAsDemoCashier()">Quick Demo Cashier Login</button>
         </form>
 
@@ -92,6 +95,24 @@
           </div>
           <button type="submit" class="auth-submit-btn" data-i18n="register_user_btn">Create Account</button>
           <p class="auth-switch-note">Already have an account? <button type="button" class="auth-link-btn" onclick="window.POS_APP.switchAuthTab('login')">Sign In</button></p>
+        </form>
+
+        <!-- OTP Verification Form -->
+        <form id="auth-otp-form" class="auth-form" style="display:none;" onsubmit="window.POS_APP.handleOtpSubmit(event)">
+          <p class="auth-hint" style="text-align:center; font-size:0.95rem; margin-bottom:1.5rem;">
+            Enter the 6-digit OTP code sent to:<br>
+            <strong id="otp-email-display" style="color:var(--primary);"></strong>
+          </p>
+          <div class="form-group">
+            <label>One-Time Password (OTP)</label>
+            <input type="text" id="otp-code-input" required maxlength="6" pattern="\d{6}" placeholder="000000" inputmode="numeric" style="text-align:center; font-size:1.5rem; letter-spacing:0.5rem; font-weight:bold;">
+          </div>
+          <button type="submit" class="auth-submit-btn">Verify OTP</button>
+          <p class="auth-switch-note" style="text-align:center; margin-top:1rem;">
+            Didn't receive code? 
+            <button type="button" id="btn-resend-otp" class="auth-link-btn" onclick="window.POS_APP.handleResendOtp()">Resend OTP</button>
+          </p>
+          <button type="button" class="auth-link-btn" style="display:block; margin:1rem auto 0 auto; text-align:center;" onclick="window.POS_APP.cancelOtpFlow()">Back to Login / Register</button>
         </form>
       </div>
     </div>

@@ -205,6 +205,7 @@ exports.register = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(cleanPassword, salt);
     let authUser = null;
+    let session = null;
 
     if (hasSupabase()) {
       const { data: authData, error: authErr } = await supabase.auth.signUp({
@@ -235,7 +236,34 @@ exports.register = async (req, res, next) => {
 
       if (authData?.user) {
         authUser = authData.user;
+        session = authData.session;
       }
+    }
+
+    // If confirmation is required, Supabase session is empty/null
+    const verifyRequired = hasSupabase() ? !session : true;
+
+    if (verifyRequired) {
+      if (!hasSupabase()) {
+        // Mock: save pending registration in memory
+        pendingRegistrations[cleanEmail] = {
+          name: cleanName,
+          email: cleanEmail,
+          passwordHash,
+          role: role || 'cashier',
+          phone: phone || ''
+        };
+        console.log(`========================================`);
+        console.log(`[Mock Auth] Register OTP for ${cleanEmail}: 123456`);
+        console.log(`========================================`);
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'A verification OTP has been sent to your email. Please enter it to complete registration.',
+        verifyRequired: true,
+        email: cleanEmail
+      });
     }
 
     let savedUser;
@@ -250,7 +278,6 @@ exports.register = async (req, res, next) => {
       }, authUser?.id));
     } catch (dbErr) {
       console.warn('[Auth Register DB Notice]:', dbErr.message);
-      // Fallback memory profile so registration never soft-fails silently
       savedUser = {
         id: authUser?.id || `user_${Date.now()}`,
         name: cleanName,
@@ -270,6 +297,7 @@ exports.register = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: 'Account created successfully',
+      verifyRequired: false,
       token,
       user: authUserOut
     });
@@ -433,3 +461,244 @@ exports.getMe = async (req, res, next) => {
     next(error);
   }
 };
+
+const pendingRegistrations = {};
+
+// @desc Send OTP code for login or signup
+// @route POST /api/auth/send-otp
+exports.sendOtp = async (req, res, next) => {
+  try {
+    const { email, mode } = req.body || {};
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    const { user } = await findUserByEmail(cleanEmail);
+
+    if (mode === 'login') {
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          code: 'USER_NOT_FOUND',
+          message: 'No account found with this email. Please Register first.',
+          action: 'register'
+        });
+      }
+
+      if (hasSupabase()) {
+        const { error } = await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: { shouldCreateUser: false }
+        });
+        if (error) throw error;
+      } else {
+        console.log(`========================================`);
+        console.log(`[Mock Auth] Login OTP for ${cleanEmail}: 123456`);
+        console.log(`========================================`);
+      }
+    } else if (mode === 'register') {
+      if (user) {
+        return res.status(409).json({
+          success: false,
+          code: 'USER_EXISTS',
+          message: 'This email is already registered. Please Sign In instead.',
+          action: 'login'
+        });
+      }
+
+      if (hasSupabase()) {
+        const { error } = await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: { shouldCreateUser: true }
+        });
+        if (error) throw error;
+      } else {
+        console.log(`========================================`);
+        console.log(`[Mock Auth] Register OTP for ${cleanEmail}: 123456`);
+        console.log(`========================================`);
+      }
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid OTP mode' });
+    }
+
+    res.json({
+      success: true,
+      message: 'One-Time Password (OTP) sent to your email.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc Verify OTP code and sign in / sign up
+// @route POST /api/auth/verify-otp
+exports.verifyOtp = async (req, res, next) => {
+  try {
+    const { email, code, type, password, name, role, phone } = req.body || {};
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail || !code) {
+      return res.status(400).json({ success: false, message: 'Email and OTP code are required' });
+    }
+
+    let authenticated = null;
+
+    if (type === 'signup') {
+      if (hasSupabase()) {
+        const { data: authData, error: authErr } = await supabase.auth.verifyOtp({
+          email: cleanEmail,
+          token: code,
+          type: 'signup'
+        });
+
+        if (authErr) {
+          return res.status(400).json({ success: false, message: authErr.message });
+        }
+
+        if (authData?.user) {
+          const salt = await bcrypt.genSalt(10);
+          const passwordHash = await bcrypt.hash(password || '123456', salt);
+          const synced = await ensurePublicUser({
+            id: authData.user.id,
+            name: name || authData.user.user_metadata?.full_name || 'Cashier',
+            full_name: name || authData.user.user_metadata?.full_name || 'Cashier',
+            email: cleanEmail,
+            password: passwordHash,
+            password_hash: passwordHash,
+            role: role || 'cashier',
+            phone: phone || ''
+          });
+          authenticated = formatAuthUser(synced);
+        }
+      } else {
+        if (code === '123456') {
+          const pending = pendingRegistrations[cleanEmail] || {
+            name: name || 'Cashier',
+            email: cleanEmail,
+            role: role || 'cashier',
+            phone: phone || ''
+          };
+          const salt = await bcrypt.genSalt(10);
+          const passwordHash = await bcrypt.hash(password || '123456', salt);
+          
+          const synced = await ensurePublicUser({
+            name: pending.name,
+            full_name: pending.name,
+            email: cleanEmail,
+            password: passwordHash,
+            password_hash: passwordHash,
+            role: pending.role,
+            phone: pending.phone
+          });
+          delete pendingRegistrations[cleanEmail];
+          authenticated = formatAuthUser(synced);
+        } else {
+          return res.status(400).json({ success: false, message: 'Invalid OTP code. Please try again.' });
+        }
+      }
+    } else {
+      if (hasSupabase()) {
+        const { data: authData, error: authErr } = await supabase.auth.verifyOtp({
+          email: cleanEmail,
+          token: code,
+          type: 'email'
+        });
+
+        if (authErr) {
+          return res.status(400).json({ success: false, message: authErr.message });
+        }
+
+        if (authData?.user) {
+          const meta = authData.user.user_metadata || {};
+          const { user: existingRow } = await findUserByEmail(cleanEmail);
+          const profilePayload = {
+            id: authData.user.id,
+            name: meta.full_name || meta.name || existingRow?.name || 'Cashier',
+            full_name: meta.full_name || meta.name || existingRow?.full_name || existingRow?.name || 'Cashier',
+            email: cleanEmail,
+            role: meta.role || existingRow?.role || 'cashier',
+            phone: meta.phone || existingRow?.phone || ''
+          };
+          if (!existingRow) {
+            const salt = await bcrypt.genSalt(10);
+            const passwordHash = await bcrypt.hash('123456', salt);
+            profilePayload.password = passwordHash;
+            profilePayload.password_hash = passwordHash;
+          }
+          const synced = await ensurePublicUser(profilePayload);
+          authenticated = formatAuthUser(synced);
+        }
+      } else {
+        if (code === '123456') {
+          const { user } = await findUserByEmail(cleanEmail);
+          if (!user) {
+            return res.status(404).json({ success: false, message: 'No account found with this email. Please register first.' });
+          }
+          authenticated = formatAuthUser(user);
+        } else {
+          return res.status(400).json({ success: false, message: 'Invalid OTP code. Please try again.' });
+        }
+      }
+    }
+
+    if (!authenticated) {
+      return res.status(400).json({ success: false, message: 'Verification failed. Could not log in.' });
+    }
+
+    const token = generateToken(
+      authenticated.id,
+      authenticated.role,
+      authenticated.name,
+      authenticated.email
+    );
+
+    res.json({
+      success: true,
+      message: 'OTP verified and signed in successfully',
+      token,
+      user: authenticated
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc Resend OTP verification code
+// @route POST /api/auth/resend-otp
+exports.resendOtp = async (req, res, next) => {
+  try {
+    const { email, type } = req.body || {};
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    if (hasSupabase()) {
+      if (type === 'signup') {
+        const { error } = await supabase.auth.resend({
+          type: 'signup',
+          email: cleanEmail
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: { shouldCreateUser: false }
+        });
+        if (error) throw error;
+      }
+    } else {
+      console.log(`========================================`);
+      console.log(`[Mock Auth] Resent OTP for ${cleanEmail}: 123456`);
+      console.log(`========================================`);
+    }
+
+    res.json({
+      success: true,
+      message: 'Verification code resent successfully.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

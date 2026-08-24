@@ -64,47 +64,60 @@ async function ensurePublicUser(profile) {
     return profile;
   }
 
-  const { data: existing } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', profile.email)
-    .maybeSingle();
-
-  if (existing) {
-    const { data: updated } = await supabase
+  try {
+    const { data: existing } = await supabase
       .from('users')
-      .update({
-        name: profile.name,
-        full_name: profile.full_name,
-        role: profile.role,
-        phone: profile.phone || existing.phone || '',
-        ...(profile.password_hash ? { password: profile.password_hash, password_hash: profile.password_hash } : {})
-      })
-      .eq('id', existing.id)
+      .select('*')
+      .eq('email', profile.email)
+      .maybeSingle();
+
+    if (existing) {
+      const { data: updated } = await supabase
+        .from('users')
+        .update({
+          name: profile.name,
+          full_name: profile.full_name,
+          role: profile.role,
+          phone: profile.phone || existing.phone || '',
+          ...(profile.password_hash ? { password: profile.password_hash, password_hash: profile.password_hash } : {})
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      return updated || existing;
+    }
+
+    const insertPayload = { ...profile };
+    // Avoid sending undefined id
+    if (!insertPayload.id) delete insertPayload.id;
+
+    const { data: inserted, error } = await supabase
+      .from('users')
+      .insert([insertPayload])
       .select()
       .single();
-    return updated || existing;
-  }
 
-  const insertPayload = { ...profile };
-  // Avoid sending undefined id
-  if (!insertPayload.id) delete insertPayload.id;
-
-  const { data: inserted, error } = await supabase
-    .from('users')
-    .insert([insertPayload])
-    .select()
-    .single();
-
-  if (error) {
-    // Race: email unique conflict
-    if (String(error.message || '').toLowerCase().includes('duplicate') || error.code === '23505') {
-      const { data: again } = await supabase.from('users').select('*').eq('email', profile.email).maybeSingle();
-      if (again) return again;
+    if (error) {
+      // Race: email unique conflict
+      if (String(error.message || '').toLowerCase().includes('duplicate') || error.code === '23505') {
+        const { data: again } = await supabase.from('users').select('*').eq('email', profile.email).maybeSingle();
+        if (again) return again;
+      }
+      throw error;
     }
-    throw error;
+    return inserted;
+  } catch (dbErr) {
+    console.warn('[ensurePublicUser Fallback Warning]: Supabase db error, falling back to memory:', dbErr.message);
+    const existing = mockUsers.find((u) => u.email === profile.email);
+    if (existing) {
+      Object.assign(existing, profile);
+      return existing;
+    }
+    // Generate a temporary mock ID if none exists
+    if (!profile.id) profile.id = 'mock_' + Math.random().toString(36).substr(2, 9);
+    mockUsers.push(profile);
+    return profile;
   }
-  return inserted;
 }
 
 const seedDefaultCashierInSupabase = async () => {
@@ -241,11 +254,13 @@ exports.register = async (req, res, next) => {
       }
     }
 
-    // If confirmation is required, Supabase session is empty/null
-    const verifyRequired = hasSupabase() ? !session : true;
+    // If confirmation is required, Supabase session is empty/null.
+    // If Supabase signUp fails entirely (e.g. network timeout), we fall back to mock signup.
+    const supabaseSignupFailed = hasSupabase() && !authUser;
+    const verifyRequired = hasSupabase() ? (!session || supabaseSignupFailed) : true;
 
     if (verifyRequired) {
-      if (!hasSupabase()) {
+      if (!hasSupabase() || supabaseSignupFailed) {
         const otpCode = generateOtpCode();
         // Mock: save pending registration in memory
         pendingRegistrations[cleanEmail] = {
@@ -589,7 +604,8 @@ exports.verifyOtp = async (req, res, next) => {
     let authenticated = null;
 
     if (type === 'signup') {
-      if (hasSupabase()) {
+      const isLocalMock = !!pendingRegistrations[cleanEmail];
+      if (hasSupabase() && !isLocalMock) {
         const { data: authData, error: authErr } = await supabase.auth.verifyOtp({
           email: cleanEmail,
           token: code,
@@ -645,7 +661,8 @@ exports.verifyOtp = async (req, res, next) => {
         }
       }
     } else {
-      if (hasSupabase()) {
+      const isLocalMock = !!pendingLoginOtps[cleanEmail];
+      if (hasSupabase() && !isLocalMock) {
         const { data: authData, error: authErr } = await supabase.auth.verifyOtp({
           email: cleanEmail,
           token: code,

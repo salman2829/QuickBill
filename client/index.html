@@ -55,7 +55,7 @@
         <p id="auth-hint" class="auth-hint">New here? Register an account. Already registered? Use Sign In.</p>
         <div id="auth-error" class="auth-error" style="display:none;" role="alert"></div>
 
-        <form id="auth-login-form" class="auth-form" style="display:none;" onsubmit="window.POS_APP.handleAuthSubmit(event, 'login')">
+        <form id="auth-login-form" class="auth-form" style="display:none;">
           <div class="form-group">
             <label data-i18n="email_label">Email Address</label>
             <input type="email" id="login-email" required placeholder="Enter your registered email" autocomplete="username">
@@ -72,7 +72,7 @@
           <button type="button" class="demo-login-btn" data-i18n="demo_login" onclick="window.POS_APP.loginAsDemoCashier()">Quick Demo Cashier Login</button>
         </form>
 
-        <form id="auth-register-form" class="auth-form" onsubmit="window.POS_APP.handleAuthSubmit(event, 'register')">
+        <form id="auth-register-form" class="auth-form">
           <div class="form-group">
             <label data-i18n="full_name">Full Name</label>
             <input type="text" id="reg-name" required placeholder="John Doe" autocomplete="name">
@@ -98,7 +98,7 @@
         </form>
 
         <!-- OTP Verification Form -->
-        <form id="auth-otp-form" class="auth-form" style="display:none;" onsubmit="window.POS_APP.handleOtpSubmit(event)">
+        <form id="auth-otp-form" class="auth-form" style="display:none;">
           <p class="auth-hint" style="text-align:center; font-size:0.95rem; margin-bottom:1.5rem;">
             Enter the 6-digit OTP code sent to:<br>
             <strong id="otp-email-display" style="color:var(--primary);"></strong>

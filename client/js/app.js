@@ -444,6 +444,25 @@ class POSApp {
       this.switchAuthTab('register');
     }
 
+    // Programmatic form submit bindings to avoid inline onsubmit handler quirks
+    const loginForm = document.getElementById('auth-login-form');
+    if (loginForm && !loginForm.dataset.submitBound) {
+      loginForm.dataset.submitBound = '1';
+      loginForm.addEventListener('submit', (e) => this.handleAuthSubmit(e, 'login'));
+    }
+
+    const regForm = document.getElementById('auth-register-form');
+    if (regForm && !regForm.dataset.submitBound) {
+      regForm.dataset.submitBound = '1';
+      regForm.addEventListener('submit', (e) => this.handleAuthSubmit(e, 'register'));
+    }
+
+    const otpForm = document.getElementById('auth-otp-form');
+    if (otpForm && !otpForm.dataset.submitBound) {
+      otpForm.dataset.submitBound = '1';
+      otpForm.addEventListener('submit', (e) => this.handleOtpSubmit(e));
+    }
+
     const loginEmailInput = document.getElementById('login-email');
     if (loginEmailInput && !loginEmailInput.dataset.authBound) {
       loginEmailInput.dataset.authBound = '1';

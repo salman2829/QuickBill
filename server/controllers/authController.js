@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const emailService = require('../services/emailService');
 
 const generateToken = (id, role, name, email) => {
   return jwt.sign(
@@ -245,17 +246,24 @@ exports.register = async (req, res, next) => {
 
     if (verifyRequired) {
       if (!hasSupabase()) {
+        const otpCode = generateOtpCode();
         // Mock: save pending registration in memory
         pendingRegistrations[cleanEmail] = {
           name: cleanName,
           email: cleanEmail,
           passwordHash,
           role: role || 'cashier',
-          phone: phone || ''
+          phone: phone || '',
+          code: otpCode
         };
-        console.log(`========================================`);
-        console.log(`[Mock Auth] Register OTP for ${cleanEmail}: 123456`);
-        console.log(`========================================`);
+
+        if (hasResend()) {
+          await emailService.sendOtpEmail(cleanEmail, cleanName, otpCode, 'signup');
+        } else {
+          console.log(`========================================`);
+          console.log(`[Mock Auth] Register OTP for ${cleanEmail}: ${otpCode}`);
+          console.log(`========================================`);
+        }
       }
 
       return res.status(201).json({
@@ -463,6 +471,16 @@ exports.getMe = async (req, res, next) => {
 };
 
 const pendingRegistrations = {};
+const pendingLoginOtps = {};
+
+const generateOtpCode = () => {
+  if (process.env.RESEND_API_KEY) {
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+  return '123456';
+};
+
+const hasResend = () => !!process.env.RESEND_API_KEY;
 
 // @desc Send OTP code for login or signup
 // @route POST /api/auth/send-otp
@@ -493,9 +511,19 @@ exports.sendOtp = async (req, res, next) => {
         });
         if (error) throw error;
       } else {
-        console.log(`========================================`);
-        console.log(`[Mock Auth] Login OTP for ${cleanEmail}: 123456`);
-        console.log(`========================================`);
+        const otpCode = generateOtpCode();
+        pendingLoginOtps[cleanEmail] = {
+          code: otpCode,
+          expires: Date.now() + 10 * 60 * 1000
+        };
+
+        if (hasResend()) {
+          await emailService.sendOtpEmail(cleanEmail, user.name, otpCode, 'login');
+        } else {
+          console.log(`========================================`);
+          console.log(`[Mock Auth] Login OTP for ${cleanEmail}: ${otpCode}`);
+          console.log(`========================================`);
+        }
       }
     } else if (mode === 'register') {
       if (user) {
@@ -514,9 +542,26 @@ exports.sendOtp = async (req, res, next) => {
         });
         if (error) throw error;
       } else {
-        console.log(`========================================`);
-        console.log(`[Mock Auth] Register OTP for ${cleanEmail}: 123456`);
-        console.log(`========================================`);
+        const otpCode = generateOtpCode();
+        if (pendingRegistrations[cleanEmail]) {
+          pendingRegistrations[cleanEmail].code = otpCode;
+        } else {
+          pendingRegistrations[cleanEmail] = {
+            name: 'Cashier',
+            email: cleanEmail,
+            role: 'cashier',
+            phone: '',
+            code: otpCode
+          };
+        }
+
+        if (hasResend()) {
+          await emailService.sendOtpEmail(cleanEmail, pendingRegistrations[cleanEmail].name, otpCode, 'signup');
+        } else {
+          console.log(`========================================`);
+          console.log(`[Mock Auth] Register OTP for ${cleanEmail}: ${otpCode}`);
+          console.log(`========================================`);
+        }
       }
     } else {
       return res.status(400).json({ success: false, message: 'Invalid OTP mode' });
@@ -571,8 +616,11 @@ exports.verifyOtp = async (req, res, next) => {
           authenticated = formatAuthUser(synced);
         }
       } else {
-        if (code === '123456') {
-          const pending = pendingRegistrations[cleanEmail] || {
+        const pending = pendingRegistrations[cleanEmail];
+        const expectedCode = pending?.code || '123456';
+
+        if (code === expectedCode) {
+          const activePending = pending || {
             name: name || 'Cashier',
             email: cleanEmail,
             role: role || 'cashier',
@@ -582,13 +630,13 @@ exports.verifyOtp = async (req, res, next) => {
           const passwordHash = await bcrypt.hash(password || '123456', salt);
           
           const synced = await ensurePublicUser({
-            name: pending.name,
-            full_name: pending.name,
+            name: activePending.name,
+            full_name: activePending.name,
             email: cleanEmail,
             password: passwordHash,
             password_hash: passwordHash,
-            role: pending.role,
-            phone: pending.phone
+            role: activePending.role,
+            phone: activePending.phone
           });
           delete pendingRegistrations[cleanEmail];
           authenticated = formatAuthUser(synced);
@@ -629,11 +677,14 @@ exports.verifyOtp = async (req, res, next) => {
           authenticated = formatAuthUser(synced);
         }
       } else {
-        if (code === '123456') {
+        const expectedCode = pendingLoginOtps[cleanEmail]?.code || '123456';
+
+        if (code === expectedCode) {
           const { user } = await findUserByEmail(cleanEmail);
           if (!user) {
             return res.status(404).json({ success: false, message: 'No account found with this email. Please register first.' });
           }
+          delete pendingLoginOtps[cleanEmail];
           authenticated = formatAuthUser(user);
         } else {
           return res.status(400).json({ success: false, message: 'Invalid OTP code. Please try again.' });
@@ -688,9 +739,45 @@ exports.resendOtp = async (req, res, next) => {
         if (error) throw error;
       }
     } else {
-      console.log(`========================================`);
-      console.log(`[Mock Auth] Resent OTP for ${cleanEmail}: 123456`);
-      console.log(`========================================`);
+      const otpCode = generateOtpCode();
+
+      if (type === 'signup') {
+        if (pendingRegistrations[cleanEmail]) {
+          pendingRegistrations[cleanEmail].code = otpCode;
+        } else {
+          pendingRegistrations[cleanEmail] = {
+            name: 'Cashier',
+            email: cleanEmail,
+            role: 'cashier',
+            phone: '',
+            code: otpCode
+          };
+        }
+
+        if (hasResend()) {
+          await emailService.sendOtpEmail(cleanEmail, pendingRegistrations[cleanEmail].name, otpCode, 'signup');
+        } else {
+          console.log(`========================================`);
+          console.log(`[Mock Auth] Resent Register OTP for ${cleanEmail}: ${otpCode}`);
+          console.log(`========================================`);
+        }
+      } else {
+        pendingLoginOtps[cleanEmail] = {
+          code: otpCode,
+          expires: Date.now() + 10 * 60 * 1000
+        };
+
+        const { user } = await findUserByEmail(cleanEmail);
+        const name = user ? user.name : 'Cashier';
+
+        if (hasResend()) {
+          await emailService.sendOtpEmail(cleanEmail, name, otpCode, 'login');
+        } else {
+          console.log(`========================================`);
+          console.log(`[Mock Auth] Resent Login OTP for ${cleanEmail}: ${otpCode}`);
+          console.log(`========================================`);
+        }
+      }
     }
 
     res.json({

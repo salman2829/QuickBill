@@ -1,6 +1,34 @@
 -- QuickBill POS - Supabase PostgreSQL Full Schema & PostgREST Cache Refresh
 
--- 1. Ensure Users Table exists
+-- =========================================================================
+-- ⚡ 1. MIGRATION UPGRADE ALTERS (Safe for pre-existing tables - MUST RUN FIRST) ⚡
+-- =========================================================================
+DO $$
+BEGIN
+  -- Add user_email column to products table if not exists
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'products') THEN
+    ALTER TABLE public.products ADD COLUMN IF NOT EXISTS user_email TEXT DEFAULT 'cashier@quickbill.com';
+  END IF;
+
+  -- Add user_email column to sales table if not exists
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sales') THEN
+    ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS user_email TEXT DEFAULT 'cashier@quickbill.com';
+  END IF;
+END $$;
+
+-- Drop old global uniqueness constraints on products (safe if constraints exist or not)
+ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_sku_key;
+ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_barcode_key;
+
+-- Apply composite user constraints to products (ensures isolation per email)
+ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_user_barcode_unique;
+ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_user_sku_unique;
+
+-- =========================================================================
+-- ⚡ 2. CREATE TABLES (Will run if tables do not exist)
+-- =========================================================================
+
+-- Ensure Users Table exists
 CREATE TABLE IF NOT EXISTS public.users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL DEFAULT 'Cashier',
@@ -23,7 +51,7 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS face_id TEXT DEFAULT NULL;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS is_otp_verified BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
--- 2. Create Products Table (isolated per shop/user email)
+-- Create Products Table (isolated per shop/user email)
 CREATE TABLE IF NOT EXISTS public.products (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   sku TEXT NOT NULL,
@@ -42,7 +70,7 @@ CREATE TABLE IF NOT EXISTS public.products (
   UNIQUE (user_email, sku)
 );
 
--- 3. Create Sales / Invoices Table (isolated per shop/user email)
+-- Create Sales / Invoices Table (isolated per shop/user email)
 CREATE TABLE IF NOT EXISTS public.sales (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   invoice_no TEXT UNIQUE NOT NULL,
@@ -64,6 +92,18 @@ CREATE INDEX IF NOT EXISTS idx_products_barcode ON public.products(barcode);
 CREATE INDEX IF NOT EXISTS idx_products_user_email ON public.products(user_email);
 CREATE INDEX IF NOT EXISTS idx_sales_user_email ON public.sales(user_email);
 
+-- Apply composite constraints to products in case the table already existed and we skipped the definition above
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_user_barcode_unique') THEN
+    ALTER TABLE public.products ADD CONSTRAINT products_user_barcode_unique UNIQUE (user_email, barcode);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_user_sku_unique') THEN
+    ALTER TABLE public.products ADD CONSTRAINT products_user_sku_unique UNIQUE (user_email, sku);
+  END IF;
+END $$;
+
 -- Seed Default Initial Products for Demo Cashier
 INSERT INTO public.products (sku, barcode, name, category, price, cost_price, stock_quantity, min_stock_threshold, unit, image_url, user_email)
 VALUES
@@ -78,24 +118,6 @@ ON CONFLICT (user_email, barcode) DO NOTHING;
 GRANT ALL ON TABLE public.users TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.products TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.sales TO anon, authenticated, service_role;
-
--- ⚡ MIGRATION UPGRADE ALTERS (Safe for pre-existing tables) ⚡
-ALTER TABLE public.products ADD COLUMN IF NOT EXISTS user_email TEXT DEFAULT 'cashier@quickbill.com';
-ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS user_email TEXT DEFAULT 'cashier@quickbill.com';
-
--- Drop old global uniqueness constraints
-ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_sku_key;
-ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_barcode_key;
-
--- Apply composite user constraints
-ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_user_barcode_unique;
-ALTER TABLE public.products ADD CONSTRAINT products_user_barcode_unique UNIQUE (user_email, barcode);
-ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_user_sku_unique;
-ALTER TABLE public.products ADD CONSTRAINT products_user_sku_unique UNIQUE (user_email, sku);
-
--- Ensure index recreation
-CREATE INDEX IF NOT EXISTS idx_products_user_email ON public.products(user_email);
-CREATE INDEX IF NOT EXISTS idx_sales_user_email ON public.sales(user_email);
 
 -- ⚡ RELOAD SUPABASE POSTGREST SCHEMA CACHE ⚡
 NOTIFY pgrst, 'reload schema';

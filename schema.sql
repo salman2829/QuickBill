@@ -119,5 +119,10 @@ GRANT ALL ON TABLE public.users TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.products TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.sales TO anon, authenticated, service_role;
 
+-- Disable Row Level Security (RLS) so that the Express backend can manage read/write access
+ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.products DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sales DISABLE ROW LEVEL SECURITY;
+
 -- ⚡ RELOAD SUPABASE POSTGREST SCHEMA CACHE ⚡
 NOTIFY pgrst, 'reload schema';

@@ -702,7 +702,13 @@ class POSApp {
         } else {
           const password = document.getElementById('login-password').value;
           const res = await API.login(email, password);
-          if (res.token) {
+          if (res.verifyRequired) {
+            this.otpMode = true;
+            this.otpEmail = res.email || email;
+            this.otpType = 'login';
+            this.showOtpView(res.message || 'Verification OTP sent to your email.');
+            this.startResendCountdown();
+          } else if (res.token) {
             API.setToken(res.token);
             this.rememberAccount(res.user?.email || email);
             this.showToast(res.message || 'Signed in successfully');

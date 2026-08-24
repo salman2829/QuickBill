@@ -48,10 +48,11 @@ app.get(['/api/health', '/health'], (req, res) => {
 });
 
 // Static Files Serving for Local Dev / Standalone
+// client/ is served first so local edits take priority over public/ build artifacts
 const publicPath = path.join(__dirname, '..', 'public');
 const clientPath = path.join(__dirname, '..', 'client');
-app.use(express.static(publicPath));
 app.use(express.static(clientPath));
+app.use(express.static(publicPath));
 
 // API 404 Handler - ALWAYS return JSON instead of HTML for API paths
 app.use(['/api/*', '/auth/*', '/products/*', '/sales/*', '/ai/*'], (req, res) => {

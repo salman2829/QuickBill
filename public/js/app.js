@@ -316,6 +316,13 @@ class POSApp {
     this._sessionKey = 'qb_pos_session_v1';
     this._persistTimer = null;
 
+    // OTP states
+    this.otpMode = false;
+    this.otpEmail = '';
+    this.otpType = 'login';
+    this.pendingRegDetails = null;
+    this.resendTimer = null;
+
     this.init();
   }
 
@@ -435,6 +442,25 @@ class POSApp {
       if (loginEmail && lastEmail) loginEmail.value = lastEmail;
     } else {
       this.switchAuthTab('register');
+    }
+
+    // Programmatic form submit bindings to avoid inline onsubmit handler quirks
+    const loginForm = document.getElementById('auth-login-form');
+    if (loginForm && !loginForm.dataset.submitBound) {
+      loginForm.dataset.submitBound = '1';
+      loginForm.addEventListener('submit', (e) => this.handleAuthSubmit(e, 'login'));
+    }
+
+    const regForm = document.getElementById('auth-register-form');
+    if (regForm && !regForm.dataset.submitBound) {
+      regForm.dataset.submitBound = '1';
+      regForm.addEventListener('submit', (e) => this.handleAuthSubmit(e, 'register'));
+    }
+
+    const otpForm = document.getElementById('auth-otp-form');
+    if (otpForm && !otpForm.dataset.submitBound) {
+      otpForm.dataset.submitBound = '1';
+      otpForm.addEventListener('submit', (e) => this.handleOtpSubmit(e));
     }
 
     const loginEmailInput = document.getElementById('login-email');
@@ -601,24 +627,27 @@ class POSApp {
   switchAuthTab(tab) {
     const loginForm = document.getElementById('auth-login-form');
     const regForm = document.getElementById('auth-register-form');
+    const otpForm = document.getElementById('auth-otp-form');
     const btnLogin = document.getElementById('tab-btn-login');
     const btnReg = document.getElementById('tab-btn-register');
     const subtitle = document.getElementById('auth-panel-subtitle');
     const hint = document.getElementById('auth-hint');
     this.setAuthError('');
 
+    if (otpForm) otpForm.style.display = 'none';
+
     if (tab === 'login') {
-      loginForm.style.display = 'flex';
-      regForm.style.display = 'none';
-      btnLogin.classList.add('active');
-      btnReg.classList.remove('active');
+      if (loginForm) loginForm.style.display = 'flex';
+      if (regForm) regForm.style.display = 'none';
+      if (btnLogin) btnLogin.classList.add('active');
+      if (btnReg) btnReg.classList.remove('active');
       if (subtitle) subtitle.textContent = 'Welcome back — sign in to your terminal';
       if (hint) hint.textContent = 'Already registered? Enter your email and password to continue.';
     } else {
-      loginForm.style.display = 'none';
-      regForm.style.display = 'flex';
-      btnReg.classList.add('active');
-      btnLogin.classList.remove('active');
+      if (loginForm) loginForm.style.display = 'none';
+      if (regForm) regForm.style.display = 'flex';
+      if (btnReg) btnReg.classList.add('active');
+      if (btnLogin) btnLogin.classList.remove('active');
       if (subtitle) subtitle.textContent = 'New here? Create your cashier account';
       if (hint) hint.textContent = 'New users should Register. If this email already exists, we’ll switch you to Sign In.';
     }
@@ -663,14 +692,22 @@ class POSApp {
     try {
       if (mode === 'login') {
         const email = document.getElementById('login-email').value.trim();
-        const password = document.getElementById('login-password').value;
 
-        const res = await API.login(email, password);
-        if (res.token) {
-          API.setToken(res.token);
-          this.rememberAccount(res.user?.email || email);
-          this.showToast(res.message || 'Signed in successfully');
-          await this.enterAuthenticatedApp(res.user);
+        if (this.otpMode) {
+          const res = await API.sendOtp(email, 'login');
+          this.otpEmail = email;
+          this.otpType = 'login';
+          this.showOtpView(res.message || 'One-Time Password (OTP) sent to your email.');
+          this.startResendCountdown();
+        } else {
+          const password = document.getElementById('login-password').value;
+          const res = await API.login(email, password);
+          if (res.token) {
+            API.setToken(res.token);
+            this.rememberAccount(res.user?.email || email);
+            this.showToast(res.message || 'Signed in successfully');
+            await this.enterAuthenticatedApp(res.user);
+          }
         }
       } else if (mode === 'register') {
         const userData = {
@@ -681,7 +718,14 @@ class POSApp {
         };
 
         const res = await API.register(userData);
-        if (res.token) {
+        if (res.verifyRequired) {
+          this.otpMode = true;
+          this.otpEmail = res.email || userData.email;
+          this.otpType = 'signup';
+          this.pendingRegDetails = userData;
+          this.showOtpView(res.message || 'Verification OTP sent to your email.');
+          this.startResendCountdown();
+        } else if (res.token) {
           API.setToken(res.token);
           this.rememberAccount(res.user?.email || userData.email);
           this.showToast(res.message || 'Account created successfully');
@@ -698,7 +742,7 @@ class POSApp {
         document.getElementById('login-email').value = email;
         this.rememberAccount(email);
         setTimeout(() => this.switchAuthTab('login'), 400);
-      } else if (mode === 'login' && (lower.includes('no account') || lower.includes('register'))) {
+      } else if (mode === 'login' && !this.otpMode && (lower.includes('no account') || lower.includes('register'))) {
         const email = document.getElementById('login-email')?.value || '';
         this.setAuthError(msg);
         document.getElementById('reg-email').value = email;
@@ -724,6 +768,168 @@ class POSApp {
       }
     } catch (e) {
       this.setAuthError(e.message || 'Demo login failed');
+    } finally {
+      this.setAuthBusy(false);
+    }
+  }
+
+  toggleOtpLoginMode(isOtp) {
+    const passwordGroup = document.getElementById('login-password-group');
+    const toggleBtn = document.getElementById('btn-toggle-otp-login');
+    const submitBtn = document.getElementById('btn-login-submit');
+    const loginPassword = document.getElementById('login-password');
+
+    this.otpMode = isOtp;
+
+    if (isOtp) {
+      if (passwordGroup) passwordGroup.style.display = 'none';
+      if (loginPassword) loginPassword.removeAttribute('required');
+      if (toggleBtn) {
+        toggleBtn.textContent = 'Sign In with Password';
+        toggleBtn.setAttribute('onclick', 'window.POS_APP.toggleOtpLoginMode(false)');
+      }
+      if (submitBtn) {
+        submitBtn.textContent = 'Send OTP';
+        submitBtn.removeAttribute('data-i18n');
+      }
+    } else {
+      if (passwordGroup) passwordGroup.style.display = 'block';
+      if (loginPassword) loginPassword.setAttribute('required', '');
+      if (toggleBtn) {
+        toggleBtn.textContent = 'Sign In with OTP';
+        toggleBtn.setAttribute('onclick', 'window.POS_APP.toggleOtpLoginMode(true)');
+      }
+      if (submitBtn) {
+        submitBtn.textContent = this.t('secure_login');
+        submitBtn.setAttribute('data-i18n', 'secure_login');
+      }
+    }
+  }
+
+  showOtpView(message) {
+    const loginForm = document.getElementById('auth-login-form');
+    const regForm = document.getElementById('auth-register-form');
+    const otpForm = document.getElementById('auth-otp-form');
+    const otpEmailDisplay = document.getElementById('otp-email-display');
+    const subtitle = document.getElementById('auth-panel-subtitle');
+    const hint = document.getElementById('auth-hint');
+
+    if (loginForm) loginForm.style.display = 'none';
+    if (regForm) regForm.style.display = 'none';
+    if (otpForm) otpForm.style.display = 'flex';
+
+    if (otpEmailDisplay) otpEmailDisplay.textContent = this.otpEmail;
+    if (subtitle) subtitle.textContent = 'Verify One-Time Password';
+    if (hint) hint.textContent = message || 'Enter the 6-digit OTP code sent to your email.';
+
+    const codeInput = document.getElementById('otp-code-input');
+    if (codeInput) {
+      codeInput.value = '';
+      codeInput.focus();
+    }
+  }
+
+  cancelOtpFlow() {
+    this.otpMode = false;
+    this.otpEmail = '';
+    this.pendingRegDetails = null;
+    if (this.resendTimer) {
+      clearInterval(this.resendTimer);
+      this.resendTimer = null;
+    }
+    const btnResend = document.getElementById('btn-resend-otp');
+    if (btnResend) {
+      btnResend.disabled = false;
+      btnResend.textContent = 'Resend OTP';
+    }
+
+    this.toggleOtpLoginMode(false);
+    this.switchAuthTab(this.otpType === 'signup' ? 'register' : 'login');
+  }
+
+  startResendCountdown() {
+    if (this.resendTimer) {
+      clearInterval(this.resendTimer);
+    }
+    const btnResend = document.getElementById('btn-resend-otp');
+    if (!btnResend) return;
+
+    let seconds = 30;
+    btnResend.disabled = true;
+    btnResend.textContent = `Resend OTP (${seconds}s)`;
+
+    this.resendTimer = setInterval(() => {
+      seconds--;
+      if (seconds <= 0) {
+        clearInterval(this.resendTimer);
+        this.resendTimer = null;
+        btnResend.disabled = false;
+        btnResend.textContent = 'Resend OTP';
+      } else {
+        btnResend.textContent = `Resend OTP (${seconds}s)`;
+      }
+    }, 1000);
+  }
+
+  async handleResendOtp() {
+    if (!this.otpEmail) return;
+    this.setAuthError('');
+    try {
+      const res = await API.resendOtp(this.otpEmail, this.otpType);
+      this.showToast(res.message || 'OTP resent successfully.');
+      this.startResendCountdown();
+    } catch (err) {
+      this.setAuthError(err.message || 'Failed to resend OTP.');
+    }
+  }
+
+  async handleOtpSubmit(e) {
+    e.preventDefault();
+    this.setAuthError('');
+    const codeInput = document.getElementById('otp-code-input');
+    if (!codeInput) return;
+    const code = codeInput.value.trim();
+    if (code.length !== 6) {
+      this.setAuthError('Please enter a 6-digit OTP code.');
+      return;
+    }
+
+    this.setAuthBusy(true);
+    try {
+      const payload = {
+        email: this.otpEmail,
+        code: code,
+        type: this.otpType === 'signup' ? 'signup' : 'login'
+      };
+
+      if (this.otpType === 'signup' && this.pendingRegDetails) {
+        payload.name = this.pendingRegDetails.name;
+        payload.password = this.pendingRegDetails.password;
+        payload.role = this.pendingRegDetails.role;
+        payload.phone = this.pendingRegDetails.phone || '';
+      }
+
+      const res = await API.verifyOtp(payload);
+      if (res.token) {
+        if (this.resendTimer) {
+          clearInterval(this.resendTimer);
+          this.resendTimer = null;
+        }
+
+        API.setToken(res.token);
+        this.rememberAccount(res.user?.email || this.otpEmail);
+        this.showToast(res.message || 'Signed in successfully');
+
+        this.otpMode = false;
+        this.otpEmail = '';
+        this.pendingRegDetails = null;
+
+        await this.enterAuthenticatedApp(res.user);
+      } else {
+        this.setAuthError('Verification failed. No token received.');
+      }
+    } catch (err) {
+      this.setAuthError(err.message || 'Verification failed. Please try again.');
     } finally {
       this.setAuthBusy(false);
     }

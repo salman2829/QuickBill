@@ -51,6 +51,9 @@ const API = {
   register: (userData) => API.request('/auth/register', 'POST', userData),
   checkEmail: (email) => API.request('/auth/check-email', 'POST', { email }),
   getMe: () => API.request('/auth/me'),
+  sendOtp: (email, mode) => API.request('/auth/send-otp', 'POST', { email, mode }),
+  verifyOtp: (payload) => API.request('/auth/verify-otp', 'POST', payload),
+  resendOtp: (email, type) => API.request('/auth/resend-otp', 'POST', { email, type }),
 
   // Product endpoints
   getProducts: (search = '', category = 'All') => 

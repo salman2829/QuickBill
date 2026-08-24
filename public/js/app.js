@@ -511,6 +511,15 @@ class POSApp {
     this.fetchAiInsights();
     this.activatePosSession();
     this.updateBackButton();
+
+    // Trigger Guided Onboarding Tour for new cashiers/shops
+    if (!localStorage.getItem('qb_tour_completed')) {
+      setTimeout(() => {
+        if (window.GUIDED_TOUR) {
+          window.GUIDED_TOUR.start();
+        }
+      }, 1500);
+    }
   }
 
   t(key) {
@@ -2389,6 +2398,234 @@ class POSApp {
     }
   }
 }
+
+// =========================================================================
+// ⚡ Guided Onboarding Tour System
+// =========================================================================
+
+const TOUR_STEPS = [
+  {
+    title: "Welcome to QuickBill POS! 🚀",
+    content: "Let's take a quick 1-minute guided tour to show you how to manage your shop's inventory, scan barcodes, and generate bills efficiently.",
+    element: null,
+    action: () => {}
+  },
+  {
+    title: "POS Checkout Terminal 🛒",
+    content: "This is your cashier terminal. You can search products, select category filters, scan barcodes using your webcam, or manually type codes.",
+    element: () => document.querySelector('button[data-tab="pos"]'),
+    action: () => {
+      window.POS_APP.switchTab('pos');
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        if (b.getAttribute('data-tab') === 'pos') b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+  },
+  {
+    title: "Instant Cart & Receipt Generation 🖨️",
+    content: "Products you add appear here in the cart. Set a customer phone number to send bills automatically via WhatsApp, select payments, and checkout!",
+    element: () => document.getElementById('cart-section'),
+    action: () => {
+      window.POS_APP.switchTab('pos');
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        if (b.getAttribute('data-tab') === 'pos') b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+  },
+  {
+    title: "Manage Product Inventory 📦",
+    content: "Here is your Inventory Manager. You can check stock counts, configure thresholds, compare wholesale suppliers, and add new products.",
+    element: () => document.querySelector('button[data-tab="inventory"]'),
+    action: () => {
+      window.POS_APP.switchTab('inventory');
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        if (b.getAttribute('data-tab') === 'inventory') b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+  },
+  {
+    title: "Add a New Product ➕",
+    content: "Click this 'Add New Product' button to register a new item in your inventory, set pricing, barcodes, and upload images.",
+    element: () => document.getElementById('btn-inventory-add-product') || document.querySelector('#tab-inventory button.scanner-btn'),
+    action: () => {
+      window.POS_APP.switchTab('inventory');
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        if (b.getAttribute('data-tab') === 'inventory') b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+  },
+  {
+    title: "Sales History & Analytics 📊",
+    content: "Review all generated invoices, search past bills, inspect customer visits, and check weekly revenue charts with Gemini AI analysis.",
+    element: () => document.querySelector('button[data-tab="analytics"]'),
+    action: () => {
+      window.POS_APP.switchTab('analytics');
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        if (b.getAttribute('data-tab') === 'analytics') b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+  },
+  {
+    title: "Hands-Free Voice Assistant 🎙️",
+    content: "Use 'Hey Access' Voice AI to search products, add to cart, and checkout completely hands-free while serving customers!",
+    element: () => document.getElementById('btn-voice-ai'),
+    action: () => {
+      window.POS_APP.switchTab('pos');
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        if (b.getAttribute('data-tab') === 'pos') b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+  },
+  {
+    title: "You're Ready to Go! 🎉",
+    content: "Happy billing! You can now start registering your products or scanning barcodes.",
+    element: null,
+    action: () => {}
+  }
+];
+
+class GuidedTour {
+  constructor() {
+    this.currentStep = 0;
+    this.steps = TOUR_STEPS;
+    this.overlay = null;
+    this.popup = null;
+  }
+
+  start() {
+    this.currentStep = 0;
+    this.createElements();
+    this.showStep();
+  }
+
+  createElements() {
+    const oldOverlay = document.getElementById('tour-overlay');
+    if (oldOverlay) oldOverlay.remove();
+    const oldPopup = document.getElementById('tour-popup');
+    if (oldPopup) oldPopup.remove();
+
+    this.overlay = document.createElement('div');
+    this.overlay.id = 'tour-overlay';
+    this.overlay.className = 'tour-overlay';
+    document.body.appendChild(this.overlay);
+
+    this.popup = document.createElement('div');
+    this.popup.id = 'tour-popup';
+    this.popup.className = 'tour-popup';
+    document.body.appendChild(this.popup);
+  }
+
+  showStep() {
+    const step = this.steps[this.currentStep];
+    if (!step) {
+      this.end();
+      return;
+    }
+
+    if (step.action) step.action();
+
+    document.querySelectorAll('.tour-highlight').forEach(el => el.classList.remove('tour-highlight'));
+
+    const targetEl = typeof step.element === 'function' ? step.element() : step.element;
+
+    if (targetEl) {
+      targetEl.classList.add('tour-highlight');
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      setTimeout(() => {
+        const rect = targetEl.getBoundingClientRect();
+        const popupWidth = 330;
+        const popupHeight = 180;
+        
+        let top = rect.bottom + window.scrollY + 15;
+        let left = rect.left + window.scrollX + (rect.width / 2) - (popupWidth / 2);
+
+        if (left < 10) left = 10;
+        if (left + popupWidth > window.innerWidth - 10) {
+          left = window.innerWidth - popupWidth - 10;
+        }
+        if (top + popupHeight > document.documentElement.scrollHeight - 10) {
+          top = rect.top + window.scrollY - popupHeight - 15;
+        }
+
+        this.popup.style.top = `${top}px`;
+        this.popup.style.left = `${left}px`;
+        this.popup.classList.remove('tour-centered');
+
+        this.overlay.style.clipPath = `polygon(
+          0% 0%, 
+          0% 100%, 
+          ${rect.left}px 100%, 
+          ${rect.left}px ${rect.top}px, 
+          ${rect.right}px ${rect.top}px, 
+          ${rect.right}px ${rect.bottom}px, 
+          ${rect.left}px ${rect.bottom}px, 
+          ${rect.left}px 100%, 
+          100% 100%, 
+          100% 0%
+        )`;
+      }, 100);
+    } else {
+      this.popup.classList.add('tour-centered');
+      this.popup.style.top = '';
+      this.popup.style.left = '';
+      this.overlay.style.clipPath = 'none';
+    }
+
+    this.popup.innerHTML = `
+      <div class="tour-popup-header">
+        <h4>${step.title}</h4>
+        <span class="tour-progress">${this.currentStep + 1} / ${this.steps.length}</span>
+      </div>
+      <div class="tour-popup-body">
+        <p>${step.content}</p>
+      </div>
+      <div class="tour-popup-footer">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="window.GUIDED_TOUR.skip()">Skip</button>
+        <div style="display:flex; gap:0.5rem;">
+          ${this.currentStep > 0 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.GUIDED_TOUR.prev()">Back</button>` : ''}
+          <button type="button" class="btn btn-primary btn-sm" onclick="window.GUIDED_TOUR.next()">
+            ${this.currentStep === this.steps.length - 1 ? 'Finish' : 'Next'}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  next() {
+    this.currentStep++;
+    this.showStep();
+  }
+
+  prev() {
+    if (this.currentStep > 0) {
+      this.currentStep--;
+      this.showStep();
+    }
+  }
+
+  skip() {
+    this.end();
+  }
+
+  end() {
+    localStorage.setItem('qb_tour_completed', 'true');
+    if (this.overlay) this.overlay.remove();
+    if (this.popup) this.popup.remove();
+    document.querySelectorAll('.tour-highlight').forEach(el => el.classList.remove('tour-highlight'));
+
+    const search = document.getElementById('pos-search-input');
+    if (search) search.focus();
+  }
+}
+
+window.GUIDED_TOUR = new GuidedTour();
 
 window.addEventListener('DOMContentLoaded', () => {
   window.POS_APP = new POSApp();

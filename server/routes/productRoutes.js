@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { protect } = require('../middleware/authMiddleware');
 const {
   getProducts,
   getProductByBarcode,
@@ -11,6 +12,9 @@ const {
   compareWholesale,
   placeWholesaleOrder
 } = require('../controllers/productController');
+
+// All product inventory routes are secured under Cashier JWT session
+router.use(protect);
 
 router.get('/', getProducts);
 router.get('/low-stock', getLowStock);

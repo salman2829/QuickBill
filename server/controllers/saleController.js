@@ -1,30 +1,13 @@
 const supabase = require('../config/supabase');
 const { mockProducts } = require('./productController');
 
-let mockSales = [
-  {
-    id: 'sale_101',
-    invoiceNo: 'INV-2026-1001',
-    items: [
-      { barcode: '8901030384102', name: 'Organic Fresh Milk 1L', price: 65, quantity: 2, total: 130 },
-      { barcode: '8901030384119', name: 'Whole Wheat Bread 400g', price: 45, quantity: 1, total: 45 }
-    ],
-    subtotal: 175,
-    tax: 8.75,
-    discount: 0,
-    grandTotal: 183.75,
-    paymentMethod: 'cash',
-    customer: { name: 'Walk-in Customer', phone: '9876543210' },
-    cashierName: 'Senior Cashier',
-    createdAt: new Date()
-  }
-];
+const mockSales = [];
 
 const formatSale = (s) => ({
   _id: s.id,
   id: s.id,
   invoiceNo: s.invoice_no || s.invoiceNo,
-  items: s.items,
+  items: s.items || [],
   subtotal: Number(s.subtotal),
   tax: Number(s.tax || 0),
   discount: Number(s.discount || 0),
@@ -41,11 +24,12 @@ const hasSupabase = () =>
 const SALE_SELECT =
   'id, invoice_no, items, subtotal, tax, discount, grand_total, payment_method, customer, cashier_name, created_at';
 
-async function fetchSalesFromDb(limit = 200) {
+async function fetchSalesFromDb(userEmail, limit = 200) {
   if (!hasSupabase()) return null;
   const { data, error } = await supabase
     .from('sales')
     .select(SALE_SELECT)
+    .eq('user_email', userEmail)
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -100,6 +84,7 @@ function buildCustomerHistory(sales) {
 exports.createSale = async (req, res, next) => {
   try {
     const { items, subtotal, tax, discount, grandTotal, paymentMethod, customer, cashierName } = req.body;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
 
     if (!items || items.length === 0) {
       return res.status(400).json({ success: false, message: 'Cart items cannot be empty' });
@@ -116,7 +101,8 @@ exports.createSale = async (req, res, next) => {
       grand_total: Number(grandTotal),
       payment_method: paymentMethod || 'cash',
       customer: customer || { name: 'Walk-in Customer', phone: '' },
-      cashier_name: cashierName || (req.user ? req.user.name : 'Cashier')
+      cashier_name: cashierName || (req.user ? req.user.name : 'Cashier'),
+      user_email: userEmail
     };
 
     let sale;
@@ -125,26 +111,31 @@ exports.createSale = async (req, res, next) => {
       if (error) throw error;
       sale = formatSale(data);
 
-      // Decrement product stock in Supabase
+      // Decrement product stock in Supabase for this specific user/shop's inventory
       for (const item of items) {
         if (item.barcode) {
-          const { data: prod } = await supabase.from('products').select('id, stock_quantity').eq('barcode', item.barcode).single();
+          const { data: prod } = await supabase
+            .from('products')
+            .select('id, stock_quantity')
+            .eq('barcode', item.barcode)
+            .eq('user_email', userEmail)
+            .single();
           if (prod) {
             const newStock = Math.max(0, Number(prod.stock_quantity) - item.quantity);
-            await supabase.from('products').update({ stock_quantity: newStock }).eq('id', prod.id);
+            await supabase.from('products').update({ stock_quantity: newStock }).eq('id', prod.id).eq('user_email', userEmail);
           }
         }
       }
     } else {
       const id = `sale_${Date.now()}`;
       sale = formatSale({ id, ...salePayload, created_at: new Date().toISOString() });
-      mockSales.unshift({ id, ...salePayload, createdAt: new Date() });
+      mockSales.unshift({ id, ...salePayload, user_email: userEmail, createdAt: new Date() });
 
-      // Decrement mock stock
+      // Decrement mock stock isolated to this user's inventory
       for (const item of items) {
-        const mockP = mockProducts.find(p => p.barcode === item.barcode);
+        const mockP = mockProducts.find(p => p.barcode === item.barcode && p.user_email === userEmail);
         if (mockP) {
-          mockP.stock_quantity = Math.max(0, (mockP.stock_quantity || mockP.stockQuantity) - item.quantity);
+          mockP.stock_quantity = Math.max(0, Number(mockP.stock_quantity || 0) - item.quantity);
         }
       }
     }
@@ -163,19 +154,20 @@ exports.createSale = async (req, res, next) => {
 // @route GET /api/sales
 exports.getSales = async (req, res, next) => {
   try {
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
     let sales = [];
 
     if (hasSupabase()) {
       try {
-        const dbSales = await fetchSalesFromDb(limit);
+        const dbSales = await fetchSalesFromDb(userEmail, limit);
         sales = dbSales || [];
       } catch (dbErr) {
         console.warn('[Sales Fetch Notice]:', dbErr.message);
-        sales = mockSales.map(formatSale);
+        sales = mockSales.filter(s => s.user_email === userEmail).map(formatSale);
       }
     } else {
-      sales = mockSales.map(formatSale);
+      sales = mockSales.filter(s => s.user_email === userEmail).map(formatSale);
     }
 
     res.json({
@@ -193,15 +185,16 @@ exports.getSales = async (req, res, next) => {
 // @route GET /api/sales/customers
 exports.getCustomerHistory = async (req, res, next) => {
   try {
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     let sales = [];
     if (hasSupabase()) {
       try {
-        sales = (await fetchSalesFromDb(500)) || [];
+        sales = (await fetchSalesFromDb(userEmail, 500)) || [];
       } catch (e) {
-        sales = mockSales.map(formatSale);
+        sales = mockSales.filter(s => s.user_email === userEmail).map(formatSale);
       }
     } else {
-      sales = mockSales.map(formatSale);
+      sales = mockSales.filter(s => s.user_email === userEmail).map(formatSale);
     }
 
     const customers = buildCustomerHistory(sales);
@@ -216,15 +209,21 @@ exports.getCustomerHistory = async (req, res, next) => {
 exports.getSaleById = async (req, res, next) => {
   try {
     const { identifier } = req.params;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     let sale = null;
 
     if (hasSupabase()) {
-      const { data } = await supabase.from('sales').select(SALE_SELECT).or(`id.eq.${identifier},invoice_no.eq.${identifier}`).maybeSingle();
+      const { data } = await supabase
+        .from('sales')
+        .select(SALE_SELECT)
+        .eq('user_email', userEmail)
+        .or(`id.eq.${identifier},invoice_no.eq.${identifier}`)
+        .maybeSingle();
       if (data) sale = formatSale(data);
     }
 
     if (!sale) {
-      const found = mockSales.find(s => s.id === identifier || s.invoiceNo === identifier || s.invoice_no === identifier);
+      const found = mockSales.find(s => (s.id === identifier || s.invoiceNo === identifier || s.invoice_no === identifier) && s.user_email === userEmail);
       if (found) sale = formatSale(found);
     }
 
@@ -242,20 +241,21 @@ exports.getSaleById = async (req, res, next) => {
 // @route GET /api/sales/dashboard-stats
 exports.getDashboardStats = async (req, res, next) => {
   try {
-    let salesList = mockSales.map(formatSale);
-    let productsList = mockProducts;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
+    let salesList = mockSales.filter(s => s.user_email === userEmail).map(formatSale);
+    let productsList = mockProducts.filter(p => p.user_email === userEmail);
 
     if (hasSupabase()) {
-      const { data: dbSales } = await supabase.from('sales').select(SALE_SELECT);
+      const { data: dbSales } = await supabase.from('sales').select(SALE_SELECT).eq('user_email', userEmail);
       if (dbSales) salesList = dbSales.map(formatSale);
 
-      const { data: dbProducts } = await supabase.from('products').select('*');
+      const { data: dbProducts } = await supabase.from('products').select('*').eq('user_email', userEmail);
       if (dbProducts && dbProducts.length > 0) productsList = dbProducts;
     }
 
     const totalRevenue = salesList.reduce((acc, s) => acc + (s.grandTotal || 0), 0);
     const totalTransactions = salesList.length;
-    const lowStockCount = productsList.filter(p => (p.stock_quantity || p.stockQuantity) < 10).length;
+    const lowStockCount = productsList.filter(p => Number(p.stock_quantity || p.stockQuantity || 0) < 10).length;
     const totalProductsCount = productsList.length;
 
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

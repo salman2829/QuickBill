@@ -160,14 +160,20 @@ async function sendOtpEmail(toEmail, toName, otpCode, mode = 'login') {
   `;
 
   try {
-    const data = await resend.emails.send({
+    const response = await resend.emails.send({
       from: EMAIL_FROM,
       to: toEmail,
       subject: subject,
       html: htmlContent
     });
-    console.log(`[Resend Email Service] Email sent successfully to ${toEmail}. Message ID:`, data.id);
-    return data;
+
+    if (response.error) {
+      throw new Error(response.error.message || 'Resend API returned an error');
+    }
+
+    const messageId = response.data?.id;
+    console.log(`[Resend Email Service] Email sent successfully to ${toEmail}. Message ID:`, messageId);
+    return response.data;
   } catch (error) {
     console.error(`[Resend Email Service] Failed to send email to ${toEmail}:`, error.message);
     throw error;

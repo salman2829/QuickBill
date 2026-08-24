@@ -28,7 +28,18 @@ const PREDEFINED_PRODUCTS = [
   { id: '25', sku: 'SKU-1025', barcode: '8901030384348', name: 'Sparkling Water Lime 500ml', category: 'Beverages', price: 55, cost_price: 35, stock_quantity: 28, min_stock_threshold: 8, unit: 'bottle', image_url: 'https://images.unsplash.com/photo-1527661591475-527312dd65f5?w=400&q=80' }
 ];
 
-let mockProducts = [...PREDEFINED_PRODUCTS];
+let mockProducts = [];
+
+// Helper to seed predefined products for a user in-memory
+const seedMockProductsForUser = (email) => {
+  const userSeeds = PREDEFINED_PRODUCTS.map(p => ({
+    ...p,
+    id: `mock_${Math.random().toString(36).substr(2, 9)}`,
+    user_email: email
+  }));
+  mockProducts.push(...userSeeds);
+  return userSeeds;
+};
 
 // Helper to normalize Supabase fields into standard app properties
 const formatProduct = (p) => ({
@@ -51,11 +62,12 @@ const formatProduct = (p) => ({
 exports.getProducts = async (req, res, next) => {
   try {
     const { search, category } = req.query;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     let products = [];
 
     if (supabase && process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your-project')) {
       try {
-        let query = supabase.from('products').select('*');
+        let query = supabase.from('products').select('*').eq('user_email', userEmail);
 
         if (category && category !== 'All') {
           query = query.eq('category', category);
@@ -70,10 +82,10 @@ exports.getProducts = async (req, res, next) => {
         if (!error && data && data.length > 0) {
           products = data.map(formatProduct);
         } else if (!error && data && data.length === 0) {
-          // Auto-seed predefined products into Supabase DB if empty
-          console.log('[Supabase Auto-Seed]: Populating database with 25 predefined products...');
+          // Auto-seed predefined products into Supabase DB if empty for this user
+          console.log(`[Supabase Auto-Seed]: Populating database with 25 predefined products for ${userEmail}...`);
           const seedPayload = PREDEFINED_PRODUCTS.map(p => ({
-            sku: p.sku,
+            sku: `${p.sku}-${userEmail.replace(/[@.]/g, '_')}`,
             barcode: p.barcode,
             name: p.name,
             category: p.category,
@@ -82,7 +94,8 @@ exports.getProducts = async (req, res, next) => {
             stock_quantity: p.stock_quantity,
             min_stock_threshold: p.min_stock_threshold,
             unit: p.unit,
-            image_url: p.image_url
+            image_url: p.image_url,
+            user_email: userEmail
           }));
           const { data: seeded } = await supabase.from('products').insert(seedPayload).select();
           if (seeded) products = seeded.map(formatProduct);
@@ -93,7 +106,13 @@ exports.getProducts = async (req, res, next) => {
     }
 
     if (products.length === 0) {
-      products = mockProducts.filter(p => {
+      // In-memory mock fallback partitioned by user
+      let userMock = mockProducts.filter(p => p.user_email === userEmail);
+      if (userMock.length === 0) {
+        userMock = seedMockProductsForUser(userEmail);
+      }
+
+      products = userMock.filter(p => {
         const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode.includes(search);
         const matchCat = !category || category === 'All' || p.category === category;
         return matchSearch && matchCat;
@@ -111,20 +130,25 @@ exports.getProducts = async (req, res, next) => {
 exports.getProductByBarcode = async (req, res, next) => {
   try {
     const barcode = req.params.barcode;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     let product = null;
 
     if (supabase && process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your-project')) {
-      const { data } = await supabase.from('products').select('*').eq('barcode', barcode).single();
+      const { data } = await supabase.from('products').select('*').eq('barcode', barcode).eq('user_email', userEmail).maybeSingle();
       if (data) product = formatProduct(data);
     }
 
     if (!product) {
-      const found = mockProducts.find(p => p.barcode === barcode);
+      let userMock = mockProducts.filter(p => p.user_email === userEmail);
+      if (userMock.length === 0) {
+        userMock = seedMockProductsForUser(userEmail);
+      }
+      const found = userMock.find(p => p.barcode === barcode);
       if (found) product = formatProduct(found);
     }
 
     if (!product) {
-      return res.status(404).json({ success: false, message: `Product not found for barcode ${barcode}` });
+      return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
     res.json({ success: true, product });
@@ -133,90 +157,18 @@ exports.getProductByBarcode = async (req, res, next) => {
   }
 };
 
-// @desc Lookup product from free public REST barcode databases (OpenFoodFacts & UPCItemDB - No AI/LLM)
+// @desc Lookup public barcode database (doesn't need user isolation as it is globally public)
 // @route GET /api/products/public-barcode/:barcode
 exports.lookupPublicBarcode = async (req, res, next) => {
   try {
-    const barcode = String(req.params.barcode || '').trim();
-    if (!barcode) {
-      return res.status(400).json({ success: false, message: 'Barcode parameter is required' });
+    const barcode = req.params.barcode;
+    const { lookupBarcodeOnline } = require('../services/barcodeService');
+    const product = await lookupBarcodeOnline(barcode);
+    if (product) {
+      res.json({ success: true, product });
+    } else {
+      res.status(404).json({ success: false, message: 'Product not found in public database' });
     }
-
-    // 1. OpenFoodFacts Free Public REST API
-    try {
-      const offRes = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`, {
-        headers: { 'User-Agent': 'QuickBillPOS - Retail Application' }
-      });
-      if (offRes.ok) {
-        const offJson = await offRes.json();
-        if (offJson && offJson.status === 1 && offJson.product) {
-          const p = offJson.product;
-          const name = p.product_name_en || p.product_name || p.brands || '';
-          const brand = p.brands || '';
-          let fullName = name;
-          if (brand && name && !name.toLowerCase().includes(brand.toLowerCase())) {
-            fullName = `${brand} ${name}`;
-          }
-          if (!fullName) fullName = brand || `Product ${barcode}`;
-
-          const rawCat = p.categories ? p.categories.split(',')[0].trim() : 'General';
-          const imageUrl = p.image_front_url || p.image_url || 'https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?w=400&q=80';
-
-          if (fullName) {
-            return res.json({
-              success: true,
-              found: true,
-              product: {
-                barcode,
-                name: fullName.slice(0, 100),
-                brand: brand || '',
-                category: rawCat.slice(0, 40) || 'General',
-                imageUrl
-              }
-            });
-          }
-        }
-      }
-    } catch (offErr) {
-      console.warn('[OpenFoodFacts Public API Notice]:', offErr.message);
-    }
-
-    // 2. UPCItemDB Free Trial Public REST API Lookup
-    try {
-      const upcRes = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`);
-      if (upcRes.ok) {
-        const upcJson = await upcRes.json();
-        if (upcJson && upcJson.items && upcJson.items.length > 0) {
-          const item = upcJson.items[0];
-          const name = item.title || item.brand || `Product ${barcode}`;
-          const brand = item.brand || '';
-          const category = item.category ? item.category.split('>')[0].trim() : 'General';
-          const imageUrl = (item.images && item.images.length > 0) ? item.images[0] : 'https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?w=400&q=80';
-
-          return res.json({
-            success: true,
-            found: true,
-            product: {
-              barcode,
-              name: name.slice(0, 100),
-              brand,
-              category: category.slice(0, 40) || 'General',
-              imageUrl
-            }
-          });
-        }
-      }
-    } catch (upcErr) {
-      console.warn('[UPCItemDB Public API Notice]:', upcErr.message);
-    }
-
-    // No details found in public barcode registries
-    return res.json({
-      success: true,
-      found: false,
-      product: { barcode }
-    });
-
   } catch (error) {
     next(error);
   }
@@ -227,6 +179,7 @@ exports.lookupPublicBarcode = async (req, res, next) => {
 exports.createProduct = async (req, res, next) => {
   try {
     const { name, sku, barcode, category, price, costPrice, stockQuantity, minStockThreshold, unit, imageUrl } = req.body;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
 
     const newProductPayload = {
       sku: sku || `SKU-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -238,7 +191,8 @@ exports.createProduct = async (req, res, next) => {
       stock_quantity: Number(stockQuantity || 0),
       min_stock_threshold: Number(minStockThreshold || 5),
       unit: unit || 'pcs',
-      image_url: imageUrl || 'https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?w=400&q=80'
+      image_url: imageUrl || 'https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?w=400&q=80',
+      user_email: userEmail
     };
 
     let product;
@@ -247,19 +201,22 @@ exports.createProduct = async (req, res, next) => {
         const { data, error } = await supabase.from('products').insert([newProductPayload]).select().single();
         if (error) {
           console.warn('[Supabase Create Product Notice]:', error.message);
-          product = formatProduct({ id: String(Date.now()), ...newProductPayload });
-          mockProducts.unshift({ id: String(Date.now()), ...newProductPayload });
+          const id = `mock_${Math.random().toString(36).substr(2, 9)}`;
+          product = formatProduct({ id, ...newProductPayload });
+          mockProducts.unshift({ id, ...newProductPayload });
         } else {
           product = formatProduct(data);
         }
       } catch (dbErr) {
         console.warn('[Supabase Create Product Fallback]:', dbErr.message);
-        product = formatProduct({ id: String(Date.now()), ...newProductPayload });
-        mockProducts.unshift({ id: String(Date.now()), ...newProductPayload });
+        const id = `mock_${Math.random().toString(36).substr(2, 9)}`;
+        product = formatProduct({ id, ...newProductPayload });
+        mockProducts.unshift({ id, ...newProductPayload });
       }
     } else {
-      product = formatProduct({ id: String(Date.now()), ...newProductPayload });
-      mockProducts.unshift({ id: String(Date.now()), ...newProductPayload });
+      const id = `mock_${Math.random().toString(36).substr(2, 9)}`;
+      product = formatProduct({ id, ...newProductPayload });
+      mockProducts.unshift({ id, ...newProductPayload });
     }
 
     res.status(201).json({ success: true, message: 'Product created successfully', product });
@@ -273,6 +230,7 @@ exports.createProduct = async (req, res, next) => {
 exports.updateProduct = async (req, res, next) => {
   try {
     const id = req.params.id;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     const { name, barcode, category, price, costPrice, stockQuantity, imageUrl } = req.body;
 
     const updatePayload = {};
@@ -287,10 +245,10 @@ exports.updateProduct = async (req, res, next) => {
     let product;
     if (supabase && process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your-project')) {
       try {
-        const { data, error } = await supabase.from('products').update(updatePayload).eq('id', id).select().single();
+        const { data, error } = await supabase.from('products').update(updatePayload).eq('id', id).eq('user_email', userEmail).select().single();
         if (error) {
           console.warn('[Supabase Update Product Notice]:', error.message);
-          const idx = mockProducts.findIndex(p => p.id === id);
+          const idx = mockProducts.findIndex(p => p.id === id && p.user_email === userEmail);
           if (idx !== -1) {
             mockProducts[idx] = { ...mockProducts[idx], ...updatePayload };
             product = formatProduct(mockProducts[idx]);
@@ -299,14 +257,14 @@ exports.updateProduct = async (req, res, next) => {
           product = formatProduct(data);
         }
       } catch (dbErr) {
-        const idx = mockProducts.findIndex(p => p.id === id);
+        const idx = mockProducts.findIndex(p => p.id === id && p.user_email === userEmail);
         if (idx !== -1) {
           mockProducts[idx] = { ...mockProducts[idx], ...updatePayload };
           product = formatProduct(mockProducts[idx]);
         }
       }
     } else {
-      const idx = mockProducts.findIndex(p => p.id === id);
+      const idx = mockProducts.findIndex(p => p.id === id && p.user_email === userEmail);
       if (idx !== -1) {
         mockProducts[idx] = { ...mockProducts[idx], ...updatePayload };
         product = formatProduct(mockProducts[idx]);
@@ -314,7 +272,7 @@ exports.updateProduct = async (req, res, next) => {
     }
 
     if (!product) {
-      product = formatProduct({ id, ...updatePayload, name: name || 'Product', barcode: barcode || '1000', category: 'General', price: price || 10, stock_quantity: stockQuantity || 10 });
+      return res.status(404).json({ success: false, message: 'Product not found or unauthorized' });
     }
 
     res.json({ success: true, message: 'Product updated successfully', product });
@@ -328,12 +286,13 @@ exports.updateProduct = async (req, res, next) => {
 exports.deleteProduct = async (req, res, next) => {
   try {
     const id = req.params.id;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     if (supabase && process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your-project')) {
       try {
-        await supabase.from('products').delete().eq('id', id);
+        await supabase.from('products').delete().eq('id', id).eq('user_email', userEmail);
       } catch (e) {}
     }
-    mockProducts = mockProducts.filter(p => p.id !== id);
+    mockProducts = mockProducts.filter(p => !(p.id === id && p.user_email === userEmail));
     res.json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
     next(error);
@@ -347,9 +306,10 @@ const LOW_STOCK_ALERT_THRESHOLD = 10;
 exports.getLowStock = async (req, res, next) => {
   try {
     const threshold = Number(req.query.threshold) || LOW_STOCK_ALERT_THRESHOLD;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     let lowStockItems = [];
     if (supabase && process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your-project')) {
-      const { data } = await supabase.from('products').select('*');
+      const { data } = await supabase.from('products').select('*').eq('user_email', userEmail);
       if (data && data.length) {
         lowStockItems = data
           .filter(p => Number(p.stock_quantity) < threshold)
@@ -358,7 +318,11 @@ exports.getLowStock = async (req, res, next) => {
     }
 
     if (lowStockItems.length === 0) {
-      lowStockItems = mockProducts
+      let userMock = mockProducts.filter(p => p.user_email === userEmail);
+      if (userMock.length === 0) {
+        userMock = seedMockProductsForUser(userEmail);
+      }
+      lowStockItems = userMock
         .filter(p => Number(p.stock_quantity) < threshold)
         .map(formatProduct);
     }
@@ -375,14 +339,21 @@ exports.compareWholesale = async (req, res, next) => {
   try {
     const { compareWholesalePrices } = require('../services/wholesaleService');
     const threshold = Number(req.body?.threshold) || LOW_STOCK_ALERT_THRESHOLD;
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
     let products = Array.isArray(req.body?.products) ? req.body.products : [];
 
     if (!products.length) {
-      // Default: all items below threshold
-      let source = mockProducts.map(formatProduct);
+      let source = [];
       if (supabase && process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your-project')) {
-        const { data } = await supabase.from('products').select('*');
+        const { data } = await supabase.from('products').select('*').eq('user_email', userEmail);
         if (data && data.length) source = data.map(formatProduct);
+      }
+      if (source.length === 0) {
+        let userMock = mockProducts.filter(p => p.user_email === userEmail);
+        if (userMock.length === 0) {
+          userMock = seedMockProductsForUser(userEmail);
+        }
+        source = userMock.map(formatProduct);
       }
       products = source.filter(p => Number(p.stockQuantity) < threshold);
     }
@@ -401,6 +372,7 @@ exports.placeWholesaleOrder = async (req, res, next) => {
     const fs = require('fs');
     const path = require('path');
     const { productId, supplierId, quantity, unitCost, totalCost, supplierName } = req.body || {};
+    const userEmail = req.user?.email || 'cashier@quickbill.com';
 
     if (!productId) {
       return res.status(400).json({ success: false, message: 'productId is required' });
@@ -410,8 +382,7 @@ exports.placeWholesaleOrder = async (req, res, next) => {
     let product = null;
     let updated = null;
 
-    // Update mock stock
-    const mockIdx = mockProducts.findIndex(p => String(p.id) === String(productId));
+    const mockIdx = mockProducts.findIndex(p => String(p.id) === String(productId) && p.user_email === userEmail);
     if (mockIdx >= 0) {
       mockProducts[mockIdx].stock_quantity = Number(mockProducts[mockIdx].stock_quantity || 0) + qty;
       product = formatProduct(mockProducts[mockIdx]);
@@ -419,13 +390,14 @@ exports.placeWholesaleOrder = async (req, res, next) => {
     }
 
     if (supabase && process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('your-project')) {
-      const { data: prod } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
+      const { data: prod } = await supabase.from('products').select('*').eq('id', productId).eq('user_email', userEmail).maybeSingle();
       if (prod) {
         const newStock = Number(prod.stock_quantity || 0) + qty;
         const { data: saved, error } = await supabase
           .from('products')
           .update({ stock_quantity: newStock })
           .eq('id', productId)
+          .eq('user_email', userEmail)
           .select()
           .single();
         if (!error && saved) {

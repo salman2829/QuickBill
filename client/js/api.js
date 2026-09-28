@@ -33,7 +33,7 @@ const API = {
       } else {
         const text = await res.text();
         console.error(`[API Non-JSON Response ${res.status}]:`, text);
-        throw new Error(res.ok ? 'Unexpected response format' : `Server returned status ${res.status}. Check Vercel function logs.`);
+        throw new Error(res.ok ? 'Unexpected response format' : `Server returned status ${res.status}. Check backend logs.`);
       }
 
       if (!res.ok) {
@@ -53,7 +53,7 @@ const API = {
   getMe: () => API.request('/auth/me'),
   sendOtp: (email, mode) => API.request('/auth/send-otp', 'POST', { email, mode }),
   verifyOtp: (payload) => API.request('/auth/verify-otp', 'POST', payload),
-  resendOtp: (email, type) => API.request('/auth/resend-otp', 'POST', { email, type }),
+  resendOtp: (email, type, verifyToken) => API.request('/auth/resend-otp', 'POST', { email, type, verifyToken }),
 
   // Product endpoints
   getProducts: (search = '', category = 'All') => 

@@ -706,7 +706,8 @@ class POSApp {
           const res = await API.sendOtp(email, 'login');
           this.otpEmail = email;
           this.otpType = 'login';
-          this.showOtpView(res.message || 'One-Time Password (OTP) sent to your email.');
+          this.verifyToken = res.verifyToken || null;
+          this.showOtpView(res.message || 'One-Time Password (OTP) sent to your email.', res.debugOtp);
           this.startResendCountdown();
         } else {
           const password = document.getElementById('login-password').value;
@@ -715,7 +716,8 @@ class POSApp {
             this.otpMode = true;
             this.otpEmail = res.email || email;
             this.otpType = 'login';
-            this.showOtpView(res.message || 'Verification OTP sent to your email.');
+            this.verifyToken = res.verifyToken || null;
+            this.showOtpView(res.message || 'Verification OTP sent to your email.', res.debugOtp);
             this.startResendCountdown();
           } else if (res.token) {
             API.setToken(res.token);
@@ -737,8 +739,9 @@ class POSApp {
           this.otpMode = true;
           this.otpEmail = res.email || userData.email;
           this.otpType = 'signup';
+          this.verifyToken = res.verifyToken || null;
           this.pendingRegDetails = userData;
-          this.showOtpView(res.message || 'Verification OTP sent to your email.');
+          this.showOtpView(res.message || 'Verification OTP sent to your email.', res.debugOtp);
           this.startResendCountdown();
         } else if (res.token) {
           API.setToken(res.token);
@@ -821,7 +824,7 @@ class POSApp {
     }
   }
 
-  showOtpView(message) {
+  showOtpView(message, debugOtp = null) {
     const loginForm = document.getElementById('auth-login-form');
     const regForm = document.getElementById('auth-register-form');
     const otpForm = document.getElementById('auth-otp-form');
@@ -835,11 +838,18 @@ class POSApp {
 
     if (otpEmailDisplay) otpEmailDisplay.textContent = this.otpEmail;
     if (subtitle) subtitle.textContent = 'Verify One-Time Password';
-    if (hint) hint.textContent = message || 'Enter the 6-digit OTP code sent to your email.';
+    if (hint) {
+      let hintText = message || 'Enter the 6-digit OTP code sent to your email.';
+      if (debugOtp) {
+        hintText += ` (Demo OTP: ${debugOtp})`;
+      }
+      hint.textContent = hintText;
+    }
 
     const codeInput = document.getElementById('otp-code-input');
     if (codeInput) {
       codeInput.value = '';
+      if (debugOtp) codeInput.placeholder = debugOtp;
       codeInput.focus();
     }
   }
@@ -847,6 +857,7 @@ class POSApp {
   cancelOtpFlow() {
     this.otpMode = false;
     this.otpEmail = '';
+    this.verifyToken = null;
     this.pendingRegDetails = null;
     if (this.resendTimer) {
       clearInterval(this.resendTimer);
@@ -890,8 +901,13 @@ class POSApp {
     if (!this.otpEmail) return;
     this.setAuthError('');
     try {
-      const res = await API.resendOtp(this.otpEmail, this.otpType);
+      const res = await API.resendOtp(this.otpEmail, this.otpType, this.verifyToken);
+      if (res.verifyToken) this.verifyToken = res.verifyToken;
       this.showToast(res.message || 'OTP resent successfully.');
+      if (res.debugOtp) {
+        const hint = document.getElementById('auth-hint');
+        if (hint) hint.textContent = `${res.message} (Demo OTP: ${res.debugOtp})`;
+      }
       this.startResendCountdown();
     } catch (err) {
       this.setAuthError(err.message || 'Failed to resend OTP.');
@@ -914,7 +930,8 @@ class POSApp {
       const payload = {
         email: this.otpEmail,
         code: code,
-        type: this.otpType === 'signup' ? 'signup' : 'login'
+        type: this.otpType === 'signup' ? 'signup' : 'login',
+        verifyToken: this.verifyToken || null
       };
 
       if (this.otpType === 'signup' && this.pendingRegDetails) {
@@ -937,6 +954,7 @@ class POSApp {
 
         this.otpMode = false;
         this.otpEmail = '';
+        this.verifyToken = null;
         this.pendingRegDetails = null;
 
         await this.enterAuthenticatedApp(res.user);

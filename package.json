@@ -5,7 +5,7 @@
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "dev": "node server/server.js",
+    "dev": "nodemon --watch server --ignore public/ --ignore client/ server/server.js",
     "sync:config": "node scripts/sync-frontend-config.js",
     "build": "node scripts/sync-frontend-config.js"
   },
@@ -21,7 +21,19 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0"
   },
-  "keywords": ["pos", "mern", "supabase", "express", "gemini-ai", "pwa", "quickbill", "vercel"],
+  "keywords": [
+    "pos",
+    "mern",
+    "supabase",
+    "express",
+    "gemini-ai",
+    "pwa",
+    "quickbill",
+    "vercel"
+  ],
   "author": "Antigravity Engineering",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
 }

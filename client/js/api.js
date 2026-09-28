@@ -58,6 +58,7 @@ const API = {
   // Product endpoints
   getProducts: (search = '', category = 'All') => 
     API.request(`/products?search=${encodeURIComponent(search)}&category=${encodeURIComponent(category)}`),
+  getRecommendations: () => API.request('/products/recommendations'),
   getProductByBarcode: (barcode) => API.request(`/products/barcode/${barcode}`),
   lookupPublicBarcode: (barcode) => API.request(`/products/public-barcode/${barcode}`),
   createProduct: (productData) => API.request('/products', 'POST', productData),

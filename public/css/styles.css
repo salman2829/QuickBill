@@ -131,6 +131,16 @@ button:active:not(:disabled) {
   background: var(--primary-hover);
 }
 
+.btn-secondary {
+  background: #0284c7;
+  color: var(--text-inverse);
+  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.25);
+}
+
+.btn-secondary:hover {
+  background: #0369a1;
+}
+
 .btn-success {
   background: var(--success);
   color: var(--text-inverse);
@@ -1137,6 +1147,11 @@ button:active:not(:disabled) {
   overflow: hidden;
   background: var(--bg-dark);
   border: 1px solid var(--border-color);
+}
+
+.scanner-viewport video,
+#barcode-reader video {
+  transform: none !important;
 }
 
 .scanner-hint {

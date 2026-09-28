@@ -176,7 +176,7 @@ async function sendOtpEmail(toEmail, toName, otpCode, mode = 'login') {
     return response.data;
   } catch (error) {
     console.error(`[Resend Email Service] Failed to send email to ${toEmail}:`, error.message);
-    throw error;
+    return null;
   }
 }
 

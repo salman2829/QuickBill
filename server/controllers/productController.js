@@ -81,24 +81,6 @@ exports.getProducts = async (req, res, next) => {
 
         if (!error && data && data.length > 0) {
           products = data.map(formatProduct);
-        } else if (!error && data && data.length === 0) {
-          // Auto-seed predefined products into Supabase DB if empty for this user
-          console.log(`[Supabase Auto-Seed]: Populating database with 25 predefined products for ${userEmail}...`);
-          const seedPayload = PREDEFINED_PRODUCTS.map(p => ({
-            sku: `${p.sku}-${userEmail.replace(/[@.]/g, '_')}`,
-            barcode: p.barcode,
-            name: p.name,
-            category: p.category,
-            price: p.price,
-            cost_price: p.cost_price,
-            stock_quantity: p.stock_quantity,
-            min_stock_threshold: p.min_stock_threshold,
-            unit: p.unit,
-            image_url: p.image_url,
-            user_email: userEmail
-          }));
-          const { data: seeded } = await supabase.from('products').insert(seedPayload).select();
-          if (seeded) products = seeded.map(formatProduct);
         }
       } catch (err) {
         console.warn('[Supabase Products Get Notice]:', err.message);
@@ -108,9 +90,6 @@ exports.getProducts = async (req, res, next) => {
     if (products.length === 0) {
       // In-memory mock fallback partitioned by user
       let userMock = mockProducts.filter(p => p.user_email === userEmail);
-      if (userMock.length === 0) {
-        userMock = seedMockProductsForUser(userEmail);
-      }
 
       products = userMock.filter(p => {
         const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode.includes(search);
@@ -140,9 +119,6 @@ exports.getProductByBarcode = async (req, res, next) => {
 
     if (!product) {
       let userMock = mockProducts.filter(p => p.user_email === userEmail);
-      if (userMock.length === 0) {
-        userMock = seedMockProductsForUser(userEmail);
-      }
       const found = userMock.find(p => p.barcode === barcode);
       if (found) product = formatProduct(found);
     }
@@ -165,9 +141,9 @@ exports.lookupPublicBarcode = async (req, res, next) => {
     const { lookupBarcodeOnline } = require('../services/barcodeService');
     const product = await lookupBarcodeOnline(barcode);
     if (product) {
-      res.json({ success: true, product });
+      res.json({ success: true, found: true, product });
     } else {
-      res.status(404).json({ success: false, message: 'Product not found in public database' });
+      res.status(404).json({ success: false, found: false, message: 'Product not found in public database' });
     }
   } catch (error) {
     next(error);
@@ -440,6 +416,16 @@ exports.placeWholesaleOrder = async (req, res, next) => {
       order,
       product: updated || product
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc Get recommended default products
+// @route GET /api/products/recommendations
+exports.getRecommendations = async (req, res, next) => {
+  try {
+    res.json({ success: true, count: PREDEFINED_PRODUCTS.length, products: PREDEFINED_PRODUCTS });
   } catch (error) {
     next(error);
   }

@@ -505,9 +505,10 @@
           <p id="receipt-whatsapp-status" class="receipt-wa-status"></p>
         </div>
 
-        <div class="modal-actions" style="margin-top:1.25rem;">
-          <button type="button" class="btn btn-primary" onclick="window.print()" data-i18n="print_receipt">Print Receipt</button>
-          <button type="button" id="btn-send-whatsapp-bill" class="btn-whatsapp" onclick="window.POS_APP.shareWhatsAppBill()" data-i18n="whatsapp_bill">Send Bill on WhatsApp</button>
+        <div class="modal-actions" style="margin-top:1.25rem; display:flex; flex-wrap:wrap; gap:0.5rem; justify-content:center;">
+          <button type="button" class="btn btn-primary" onclick="window.print()" data-i18n="print_receipt">🖨️ Print Receipt</button>
+          <button type="button" id="btn-download-bill-pdf" class="btn btn-secondary" onclick="window.POS_APP.downloadActiveSalePdf()" data-i18n="download_pdf_bill">📄 Download PDF Bill</button>
+          <button type="button" id="btn-send-whatsapp-bill" class="btn-whatsapp" onclick="window.POS_APP.shareWhatsAppBill()" data-i18n="whatsapp_bill">💬 Send Bill on WhatsApp</button>
         </div>
       </div>
     </div>
@@ -583,6 +584,27 @@
           <button type="button" class="btn btn-ghost" onclick="window.POS_APP.closeDeleteModal()">Cancel</button>
           <button type="button" class="btn btn-danger" onclick="window.POS_APP.confirmDeleteProduct()">Yes, Delete Product</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Recommendations modal -->
+    <div id="recommendations-modal" class="modal-overlay">
+      <div class="modal-card" style="max-width: 800px; width: 90%;">
+        <button type="button" class="modal-close" onclick="window.POS_APP.closeRecommendationsModal()" aria-label="Close">✕</button>
+        <h3 class="modal-title">Recommended Predefined Products</h3>
+        <p class="auth-subtitle" style="margin-bottom: 1rem; line-height: 1.5;">
+          Select from our list of standard retail products to populate your inventory, or add all of them to quick start.
+        </p>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+          <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 600; cursor: pointer; color: var(--text-main); font-size: 0.95rem;">
+            <input type="checkbox" id="recommendations-select-all" onchange="window.POS_APP.toggleAllRecommendations(this.checked)">
+            Select All
+          </label>
+          <div>
+            <button type="button" class="btn btn-primary btn-sm" onclick="window.POS_APP.addSelectedRecommendations()">Add Selected to Inventory</button>
+          </div>
+        </div>
+        <div id="recommendations-list" class="products-grid" style="max-height: 420px; overflow-y: auto; gap: 1rem; padding-right: 0.25rem;"></div>
       </div>
     </div>
 

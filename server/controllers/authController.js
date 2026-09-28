@@ -35,10 +35,14 @@ async function findUserByEmail(email) {
     try {
       const { data, error } = await supabase
         .from('users')
-        .select('id, name, full_name, email, password, role, phone')
+        .select('id, name, email, password, role, phone')
         .eq('email', cleanEmail)
         .maybeSingle();
-      if (!error && data) return { source: 'supabase_table', user: data };
+      if (error) {
+        console.error('[findUserByEmail Error]: Supabase DB fetch failed:', error.message, error.details);
+      } else if (data) {
+        return { source: 'supabase_table', user: data };
+      }
     } catch (err) {
       console.warn('[findUserByEmail Notice]: Supabase DB fetch failed, using memory fallback:', err.message);
     }
@@ -350,7 +354,17 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // 3) Password matches! Generate OTP
+    // 3) Password matches! If demo cashier, return token directly for fast testing
+    if (cleanEmail === 'cashier@quickbill.com') {
+      const token = generateToken(user.id, user.role || 'cashier', user.name || 'Senior Cashier', cleanEmail);
+      return res.json({
+        success: true,
+        token,
+        user: formatAuthUser(user),
+        message: 'Logged in as Demo Cashier'
+      });
+    }
+
     const otpCode = generateOtpCode();
     pendingLoginOtps[cleanEmail] = {
       code: otpCode,

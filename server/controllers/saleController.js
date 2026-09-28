@@ -105,28 +105,34 @@ exports.createSale = async (req, res, next) => {
       user_email: userEmail
     };
 
-    let sale;
+    let sale = null;
     if (hasSupabase()) {
-      const { data, error } = await supabase.from('sales').insert([salePayload]).select(SALE_SELECT).single();
-      if (error) throw error;
-      sale = formatSale(data);
+      try {
+        const { data, error } = await supabase.from('sales').insert([salePayload]).select(SALE_SELECT).single();
+        if (error) throw error;
+        sale = formatSale(data);
 
-      // Decrement product stock in Supabase for this specific user/shop's inventory
-      for (const item of items) {
-        if (item.barcode) {
-          const { data: prod } = await supabase
-            .from('products')
-            .select('id, stock_quantity')
-            .eq('barcode', item.barcode)
-            .eq('user_email', userEmail)
-            .single();
-          if (prod) {
-            const newStock = Math.max(0, Number(prod.stock_quantity) - item.quantity);
-            await supabase.from('products').update({ stock_quantity: newStock }).eq('id', prod.id).eq('user_email', userEmail);
+        // Decrement product stock in Supabase for this specific user/shop's inventory
+        for (const item of items) {
+          if (item.barcode) {
+            const { data: prod } = await supabase
+              .from('products')
+              .select('id, stock_quantity')
+              .eq('barcode', item.barcode)
+              .eq('user_email', userEmail)
+              .single();
+            if (prod) {
+              const newStock = Math.max(0, Number(prod.stock_quantity) - item.quantity);
+              await supabase.from('products').update({ stock_quantity: newStock }).eq('id', prod.id).eq('user_email', userEmail);
+            }
           }
         }
+      } catch (dbErr) {
+        console.warn('[Supabase Create Sale Notice]:', dbErr.message);
       }
-    } else {
+    }
+
+    if (!sale) {
       const id = `sale_${Date.now()}`;
       sale = formatSale({ id, ...salePayload, created_at: new Date().toISOString() });
       mockSales.unshift({ id, ...salePayload, user_email: userEmail, createdAt: new Date() });
@@ -246,11 +252,15 @@ exports.getDashboardStats = async (req, res, next) => {
     let productsList = mockProducts.filter(p => p.user_email === userEmail);
 
     if (hasSupabase()) {
-      const { data: dbSales } = await supabase.from('sales').select(SALE_SELECT).eq('user_email', userEmail);
-      if (dbSales) salesList = dbSales.map(formatSale);
+      try {
+        const { data: dbSales } = await supabase.from('sales').select(SALE_SELECT).eq('user_email', userEmail);
+        if (dbSales) salesList = dbSales.map(formatSale);
 
-      const { data: dbProducts } = await supabase.from('products').select('*').eq('user_email', userEmail);
-      if (dbProducts && dbProducts.length > 0) productsList = dbProducts;
+        const { data: dbProducts } = await supabase.from('products').select('*').eq('user_email', userEmail);
+        if (dbProducts && dbProducts.length > 0) productsList = dbProducts;
+      } catch (dbErr) {
+        console.warn('[Dashboard Stats Supabase Notice]:', dbErr.message);
+      }
     }
 
     const totalRevenue = salesList.reduce((acc, s) => acc + (s.grandTotal || 0), 0);

@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const {
   getProducts,
+  getRecommendations,
   getProductByBarcode,
   lookupPublicBarcode,
   createProduct,
@@ -17,6 +18,7 @@ const {
 router.use(protect);
 
 router.get('/', getProducts);
+router.get('/recommendations', getRecommendations);
 router.get('/low-stock', getLowStock);
 router.post('/wholesale-compare', compareWholesale);
 router.post('/wholesale-order', placeWholesaleOrder);

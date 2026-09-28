@@ -3,6 +3,122 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 
+// Helper to upload PDF to Supabase Storage so it is accessible publicly even on localhost
+async function uploadPdfToSupabase(safeName, pdfPath) {
+  const supabase = require('../config/supabase');
+  if (!supabase || !process.env.SUPABASE_URL || String(process.env.SUPABASE_URL).includes('your-project')) {
+    return null;
+  }
+  
+  try {
+    const buffer = fs.readFileSync(pdfPath);
+    
+    // Attempt upload to 'bills' bucket
+    let { data, error } = await supabase.storage
+      .from('bills')
+      .upload(safeName, buffer, {
+        contentType: 'application/pdf',
+        upsert: true
+      });
+      
+    // If bucket not found, try creating it and re-uploading
+    if (error && error.message?.includes('not found')) {
+      console.log('[Supabase Storage] "bills" bucket not found, attempting to create it...');
+      try {
+        await supabase.storage.createBucket('bills', { public: true });
+        const retry = await supabase.storage
+          .from('bills')
+          .upload(safeName, buffer, {
+            contentType: 'application/pdf',
+            upsert: true
+          });
+        data = retry.data;
+        error = retry.error;
+      } catch (bucketErr) {
+        console.warn('[Supabase Storage] Failed to create bucket:', bucketErr.message);
+      }
+    }
+    
+    if (error) {
+      console.warn('[Supabase Storage Warning] Upload failed:', error.message);
+      return null;
+    }
+    
+    const { data: urlData } = supabase.storage
+      .from('bills')
+      .getPublicUrl(safeName);
+      
+    return urlData?.publicUrl || null;
+  } catch (err) {
+    console.warn('[Supabase Storage Exception] Upload error:', err.message);
+    return null;
+  }
+}
+
+// Helper to upload PDF to tmpfiles.org as a fallback to get a public direct-download URL
+function uploadToTmpFiles(pdfPath, safeName) {
+  return new Promise((resolve) => {
+    try {
+      const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+      const fileBuffer = fs.readFileSync(pdfPath);
+      
+      const header = 
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
+        `Content-Type: application/pdf\r\n\r\n`;
+      const footer = `\r\n--${boundary}--\r\n`;
+      
+      const payload = Buffer.concat([
+        Buffer.from(header, 'utf8'),
+        fileBuffer,
+        Buffer.from(footer, 'utf8')
+      ]);
+      
+      const req = https.request(
+        {
+          hostname: 'tmpfiles.org',
+          path: '/api/v1/upload',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'multipart/form-data; boundary=' + boundary,
+            'Content-Length': payload.length
+          }
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (chunk) => body += chunk);
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(body);
+              if (parsed.status === 'success' && parsed.data?.url) {
+                // Convert view URL to direct download URL (tmpfiles.org/123 -> tmpfiles.org/dl/123)
+                const directUrl = parsed.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+                console.log('[TmpFiles Upload] Uploaded successfully. Direct PDF URL:', directUrl);
+                resolve(directUrl);
+              } else {
+                resolve(null);
+              }
+            } catch (e) {
+              resolve(null);
+            }
+          });
+        }
+      );
+      
+      req.on('error', (err) => {
+        console.warn('[TmpFiles Upload Error]:', err.message);
+        resolve(null);
+      });
+      
+      req.write(payload);
+      req.end();
+    } catch (err) {
+      console.warn('[TmpFiles Upload Exception]:', err.message);
+      resolve(null);
+    }
+  });
+}
+
 const billsDir = path.join(__dirname, '..', '..', 'public', 'bills');
 
 function ensureBillsDir() {
@@ -52,11 +168,17 @@ async function sendViaMetaCloud(phone, message, pdfPath, pdfUrl) {
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!token || !phoneId) return null;
 
+  const fileName = pdfPath.split(path.sep).pop() || 'QuickBill_Receipt.pdf';
   const payload = {
     messaging_product: 'whatsapp',
+    recipient_type: 'individual',
     to: phone,
-    type: 'text',
-    text: { body: `${message}\n\n📄 Bill PDF: ${pdfUrl}` }
+    type: 'document',
+    document: {
+      link: pdfUrl,
+      filename: fileName,
+      caption: message
+    }
   };
 
   const body = JSON.stringify(payload);
@@ -193,11 +315,21 @@ async function deliverCustomerBill({ phone, message, pdfBase64, fileName, invoic
   }
 
   const clientUrl = (process.env.CLIENT_URL || 'http://localhost:5000').replace(/\/$/, '');
-  const pdfUrl = `${clientUrl}/bills/${safeName}`;
+  let pdfUrl = `${clientUrl}/bills/${safeName}`;
   const waPhone = normalizePhone(phone);
 
   if (!waPhone) {
     return { delivered: false, pdfSaved: !!pdfBase64, pdfUrl, error: 'Invalid phone' };
+  }
+
+  // Upload PDF to Supabase Storage so that it has a public internet URL for WhatsApp API delivery
+  let publicUrl = await uploadPdfToSupabase(safeName, pdfPath);
+  if (!publicUrl) {
+    publicUrl = await uploadToTmpFiles(pdfPath, safeName);
+  }
+
+  if (publicUrl) {
+    pdfUrl = publicUrl;
   }
 
   const attempts = [];

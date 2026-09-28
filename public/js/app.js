@@ -1509,11 +1509,11 @@ class POSApp {
     const livePhone = document.getElementById('cart-customer-phone')?.value;
     if (livePhone) this.customerPhone = this.normalizePhone(livePhone);
 
+    // If customer phone is not set, prompt once, but if skipped, proceed with walk-in
     if (!this.isValidMobile(this.customerPhone)) {
       const phone = await this.ensureCustomerPhone();
-      if (!this.isValidMobile(phone || this.customerPhone)) {
-        alert('Customer mobile number is required to complete payment and send the WhatsApp bill.');
-        return;
+      if (phone && this.isValidMobile(phone)) {
+        this.customerPhone = this.normalizePhone(phone);
       }
     }
 
@@ -1538,7 +1538,7 @@ class POSApp {
       paymentMethod,
       customer: {
         name: this.customerName || 'Walk-in Customer',
-        phone: this.normalizePhone(this.customerPhone)
+        phone: this.customerPhone ? this.normalizePhone(this.customerPhone) : ''
       },
       cashierName: document.getElementById('cashier-name-label')?.innerText || 'Cashier'
     };
@@ -1555,6 +1555,14 @@ class POSApp {
           tax,
           cashierName: salePayload.cashierName
         };
+
+        // Generate PDF document bill immediately
+        try {
+          this.lastBillPdf = this.generateBillPdfBase64(this.activeSale);
+        } catch (pdfErr) {
+          console.warn('[PDF Gen Warning]:', pdfErr);
+        }
+
         this.showReceiptModal(this.activeSale);
         this.clearCart();
         this.resetCustomerAfterSale();
@@ -1562,8 +1570,15 @@ class POSApp {
         await this.loadSalesHistory();
         await this.loadDashboardStats();
 
-        // Generate PDF + silently deliver to customer (no WhatsApp popup / no cashier permission)
-        await this.generateAndDeliverBillPdf(this.activeSale);
+        // If customer phone number is attached, automatically deliver via WhatsApp service
+        if (this.isValidMobile(salePayload.customer?.phone)) {
+          await this.generateAndDeliverBillPdf(this.activeSale);
+        } else {
+          const status = document.getElementById('receipt-whatsapp-status');
+          if (status) {
+            status.textContent = '📄 Bill document generated · Click "Send Bill on WhatsApp" to deliver to customer';
+          }
+        }
       }
     } catch (err) {
       alert('Failed to process checkout: ' + err.message);
@@ -1655,6 +1670,29 @@ class POSApp {
     document.body.appendChild(link);
     link.click();
     link.remove();
+  }
+
+  downloadActiveSalePdf() {
+    if (!this.activeSale) {
+      this.showToast('No active bill to download');
+      return;
+    }
+    const fileName = `${this.activeSale.invoiceNo || 'QuickBill_Receipt'}.pdf`;
+    let pdfDataUri = this.lastBillPdf;
+    if (!pdfDataUri) {
+      try {
+        pdfDataUri = this.generateBillPdfBase64(this.activeSale);
+        this.lastBillPdf = pdfDataUri;
+      } catch (e) {
+        console.warn('[PDF Download Error]:', e);
+      }
+    }
+    if (pdfDataUri) {
+      this.downloadPdfDataUri(pdfDataUri, fileName);
+      this.showToast(`Downloaded ${fileName} ✓`);
+    } else {
+      this.showToast('Could not generate PDF bill file.');
+    }
   }
 
   async generateAndDeliverBillPdf(sale) {
@@ -1798,8 +1836,63 @@ class POSApp {
       this.showToast('No bill available to send');
       return;
     }
-    // One click → generate PDF and auto-send to customer WhatsApp (no manual Send step)
-    await this.generateAndDeliverBillPdf(this.activeSale);
+
+    let phone = this.normalizePhone(this.activeSale.customer?.phone || this.customerPhone);
+    if (!this.isValidMobile(phone)) {
+      const enteredPhone = await this.ensureCustomerPhone();
+      if (!this.isValidMobile(enteredPhone)) {
+        this.showToast('Customer mobile number required to send WhatsApp bill');
+        const status = document.getElementById('receipt-whatsapp-status');
+        if (status) status.textContent = 'Add customer mobile to send WhatsApp bill';
+        return;
+      }
+      phone = this.normalizePhone(enteredPhone);
+      this.activeSale.customer = {
+        name: this.customerName || 'Customer',
+        phone
+      };
+      const customerEl = document.getElementById('receipt-customer');
+      if (customerEl) {
+        customerEl.innerText = `${this.customerName || 'Customer'} · +91 ${phone}`;
+      }
+    }
+
+    const formattedPhone = this.toWhatsAppNumber(phone);
+    const status = document.getElementById('receipt-whatsapp-status');
+    const btn = document.getElementById('btn-send-whatsapp-bill');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Preparing WhatsApp…';
+    }
+
+    try {
+      if (status) status.textContent = 'Generating PDF receipt link…';
+      const delivery = await this.generateAndDeliverBillPdf(this.activeSale);
+      const pdfUrl = delivery?.pdfUrl || '';
+      
+      const message = this.buildWhatsAppBillMessage({ ...this.activeSale, customer: { ...(this.activeSale.customer || {}), phone } });
+      const fullMessage = pdfUrl ? `${message}\n\n📄 *Download PDF Receipt:* ${pdfUrl}` : message;
+      
+      const waUrl = `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodeURIComponent(fullMessage)}`;
+      const waMeUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(fullMessage)}`;
+      
+      const win = window.open(waUrl, '_blank');
+      if (!win) {
+        window.open(waMeUrl, '_blank');
+      }
+      if (status) status.textContent = `Bill sent / opened for +91 ${phone} ✓`;
+    } catch (err) {
+      console.warn('[WhatsApp Share Error]:', err.message);
+      const message = this.buildWhatsAppBillMessage({ ...this.activeSale, customer: { ...(this.activeSale.customer || {}), phone } });
+      const waUrl = `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodeURIComponent(message)}`;
+      window.open(waUrl, '_blank');
+      if (status) status.textContent = `Opened WhatsApp for +91 ${phone} ✓`;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Send Bill on WhatsApp';
+      }
+    }
   }
 
   // --- BARCODE SCANNER MODAL ---

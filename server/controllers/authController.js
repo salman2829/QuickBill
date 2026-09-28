@@ -236,6 +236,115 @@ exports.checkEmail = async (req, res, next) => {
   }
 };
 
+// @desc Send OTP code for login or signup
+// @route POST /api/auth/send-otp
+exports.sendOtp = async (req, res, next) => {
+  try {
+    const { email, mode } = req.body || {};
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    const { user } = await findUserByEmail(cleanEmail);
+    const otpCode = generateOtpCode();
+
+    if (mode === 'login') {
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          code: 'USER_NOT_FOUND',
+          message: 'No account found with this email. Please Register first.',
+          action: 'register'
+        });
+      }
+
+      pendingLoginOtps[cleanEmail] = {
+        code: otpCode,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      };
+
+      const verifyToken = generateVerifyToken({
+        type: 'login',
+        email: cleanEmail,
+        code: otpCode,
+        userId: user.id,
+        name: user.name,
+        role: user.role
+      });
+
+      let emailDelivered = false;
+      let emailError = null;
+      if (hasResend()) {
+        const emailRes = await emailService.sendOtpEmail(cleanEmail, user.name, otpCode, 'login');
+        if (emailRes && emailRes.success) emailDelivered = true;
+        else emailError = emailRes?.error;
+      } else {
+        emailError = 'RESEND_API_KEY is not configured';
+      }
+
+      return res.json({
+        success: true,
+        message: emailDelivered
+          ? 'A verification OTP has been sent to your email.'
+          : 'OTP generated for sign in.',
+        verifyToken,
+        emailDelivered,
+        ...(process.env.NODE_ENV !== 'production' || !emailDelivered ? { debugOtp: otpCode } : {})
+      });
+    } else {
+      if (user && user.is_otp_verified !== false) {
+        return res.status(409).json({
+          success: false,
+          code: 'USER_EXISTS',
+          message: 'This email is already registered. Please Sign In instead.',
+          action: 'login'
+        });
+      }
+
+      pendingRegistrations[cleanEmail] = {
+        name: 'Cashier',
+        email: cleanEmail,
+        role: 'cashier',
+        phone: '',
+        code: otpCode,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      };
+
+      const verifyToken = generateVerifyToken({
+        type: 'signup',
+        email: cleanEmail,
+        code: otpCode,
+        name: 'Cashier',
+        role: 'cashier',
+        phone: ''
+      });
+
+      let emailDelivered = false;
+      let emailError = null;
+      if (hasResend()) {
+        const emailRes = await emailService.sendOtpEmail(cleanEmail, 'Cashier', otpCode, 'signup');
+        if (emailRes && emailRes.success) emailDelivered = true;
+        else emailError = emailRes?.error;
+      } else {
+        emailError = 'RESEND_API_KEY is not configured';
+      }
+
+      return res.json({
+        success: true,
+        message: emailDelivered
+          ? 'A verification OTP has been sent to your email.'
+          : 'OTP generated for registration.',
+        verifyToken,
+        emailDelivered,
+        ...(process.env.NODE_ENV !== 'production' || !emailDelivered ? { debugOtp: otpCode } : {})
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc Register new cashier (generates OTP, sends via Resend email, creates verification token)
 // @route POST /api/auth/register
 exports.register = async (req, res, next) => {
